@@ -113,8 +113,13 @@ if sr_gzWickTouch
 
 sr_gzRecentTouch = not na(sr_gzTouchBar) and bar_index - sr_gzTouchBar <= sr_gzTouchBars
 sr_gzBullReclaim = not na(sr_gzTop) and close > sr_gzTop and close > open
-sr_gzBounce = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBullReclaim and (finalLongCondition or showBullDivRSI)
+sr_gzBearReclaim = not na(sr_gzBottom) and close < sr_gzBottom and close < open
+sr_gzBounceLong = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBullReclaim
+sr_gzBounceShort = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBearReclaim
 
-if sr_gzBounce and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
+if sr_gzBounceLong and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
     sr_gzBounceAlertBar := bar_index
     alert(sr_buildPayload("golden_zone_bounce", "LONG", true), alert.freq_once_per_bar)
+if sr_gzBounceShort and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
+    sr_gzBounceAlertBar := bar_index
+    alert(sr_buildPayload("golden_zone_bounce", "SHORT", true), alert.freq_once_per_bar)

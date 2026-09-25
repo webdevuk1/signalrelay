@@ -3071,8 +3071,43 @@ if sr_gzWickTouch
 
 sr_gzRecentTouch = not na(sr_gzTouchBar) and bar_index - sr_gzTouchBar <= sr_gzTouchBars
 sr_gzBullReclaim = not na(sr_gzTop) and close > sr_gzTop and close > open
-sr_gzBounce = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBullReclaim and (finalLongCondition or showBullDivRSI)
+sr_gzBearReclaim = not na(sr_gzBottom) and close < sr_gzBottom and close < open
+// Works with Strategy Mode = Disabled (no entry signals required)
+sr_gzBounceLong = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBullReclaim
+sr_gzBounceShort = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBearReclaim
 
-if sr_gzBounce and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
+if sr_gzBounceLong and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
     sr_gzBounceAlertBar := bar_index
     alert(sr_buildPayload("golden_zone_bounce", "LONG", true), alert.freq_once_per_bar)
+if sr_gzBounceShort and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
+    sr_gzBounceAlertBar := bar_index
+    alert(sr_buildPayload("golden_zone_bounce", "SHORT", true), alert.freq_once_per_bar)
+
+// --- Fib extension / retracement target touches (Strategy Mode can stay Disabled) ---
+sr_levelTouched(float lvl) =>
+    not na(lvl) and low <= lvl and high >= lvl
+
+sr_fibAlertCooldown = 20
+var int sr_lastFib100Bar = na
+var int sr_lastFib1618Bar = na
+var int sr_lastFib2618Bar = na
+var int sr_lastFib618Bar = na
+var int sr_lastFib786Bar = na
+
+[sr_fib382, sr_fib618, sr_fib786, sr_fib100, sr_fib1618, sr_fib2618, sr_fibNeg027, sr_fibNeg618] = sr_fibSnapshot()
+
+if barstate.isconfirmed and showExtZone100 and sr_levelTouched(sr_fib100) and (na(sr_lastFib100Bar) or bar_index - sr_lastFib100Bar >= sr_fibAlertCooldown)
+    sr_lastFib100Bar := bar_index
+    alert(sr_buildPayload("fib_100_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+if barstate.isconfirmed and show1618Extension and sr_levelTouched(sr_fib1618) and (na(sr_lastFib1618Bar) or bar_index - sr_lastFib1618Bar >= sr_fibAlertCooldown)
+    sr_lastFib1618Bar := bar_index
+    alert(sr_buildPayload("fib_1618_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+if barstate.isconfirmed and showExtZone261 and sr_levelTouched(sr_fib2618) and (na(sr_lastFib2618Bar) or bar_index - sr_lastFib2618Bar >= sr_fibAlertCooldown)
+    sr_lastFib2618Bar := bar_index
+    alert(sr_buildPayload("fib_2618_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+if barstate.isconfirmed and showRetracements and sr_levelTouched(sr_fib618) and (na(sr_lastFib618Bar) or bar_index - sr_lastFib618Bar >= sr_fibAlertCooldown)
+    sr_lastFib618Bar := bar_index
+    alert(sr_buildPayload("fib_618_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+if barstate.isconfirmed and showRetracements and sr_levelTouched(sr_fib786) and (na(sr_lastFib786Bar) or bar_index - sr_lastFib786Bar >= sr_fibAlertCooldown)
+    sr_lastFib786Bar := bar_index
+    alert(sr_buildPayload("fib_786_touch", "NEUTRAL", false), alert.freq_once_per_bar)

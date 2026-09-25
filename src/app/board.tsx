@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { buildTradeAnalysisPrompt } from "@/lib/trade-prompt";
 
 type RelaySource = "momentum-master" | "hope-failure" | "unknown";
 type Horizon = "scalp" | "intraday" | "swing" | "all";
@@ -205,6 +206,7 @@ export function Board() {
   const [script, setScript] = useState<ScriptFilter>("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let stop = false;
@@ -397,9 +399,27 @@ export function Board() {
                     {chartLabel(selected.payload.interval)} · <TimeAgo iso={selected.receivedAt} /> · {selected.source}
                   </p>
                 </div>
-                <p className={`text-sm ${isGoldenBounce(selected.payload) ? "text-amber-200" : sideTone(selected.payload.side)}`}>
-                  {isGoldenBounce(selected.payload) ? "Golden bounce" : text(selected.payload.side ?? selected.payload.status) || "Alert"}
-                </p>
+                <div className="flex flex-col items-end gap-2">
+                  <p className={`text-sm ${isGoldenBounce(selected.payload) ? "text-amber-200" : sideTone(selected.payload.side)}`}>
+                    {isGoldenBounce(selected.payload) ? "Golden bounce" : text(selected.payload.side ?? selected.payload.status) || "Alert"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const prompt = buildTradeAnalysisPrompt(selected);
+                      try {
+                        await navigator.clipboard.writeText(prompt);
+                        setCopied(true);
+                        window.setTimeout(() => setCopied(false), 2000);
+                      } catch {
+                        window.prompt("Copy this prompt for Cursor:", prompt);
+                      }
+                    }}
+                    className="rounded-full border border-amber-300/40 bg-amber-400/10 px-3 py-1 text-[11px] font-medium text-amber-100 hover:bg-amber-400/20"
+                  >
+                    {copied ? "Copied" : "Copy Cursor prompt"}
+                  </button>
+                </div>
               </div>
               <dl className="mt-4 grid grid-cols-2 gap-2">
                 {filled.map((key) => {
