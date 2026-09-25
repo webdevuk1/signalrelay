@@ -1,0 +1,3067 @@
+//@version=6
+// Legacy copy — prefer momentum-master-v1-original.pine (unchanged) or momentum-master-v1-plus.pine (SignalRelay webhooks).
+indicator("Momentum Master v1", overlay=true, max_bars_back=5000, max_labels_count=500)
+
+// ==================== SETTINGS LAYOUT (Ordered by Priority) ====================
+// === 1. MOST IMPORTANT - Start Here ===
+var g_main = "Strategy Selection"
+var g_risk = "Risk Management"
+
+// === 2. STRATEGY CONFIGURATION (Click strategy above to see settings) ===
+var g_ema = "   └─ EMA Settings"
+var g_rsi = "   └─ RSI Reversion Settings"
+var g_breakout = "   └─ Breakout Settings"
+var g_macd = "   └─ MACD Settings"
+var g_bollinger = "   └─ Bollinger Bands Settings"
+var g_volume = "   └─ Volume Breakout Settings"
+
+// === 3. DISPLAY OPTIONS ===
+var g_display = "Chart Display & Tables"
+
+// === 4. SIGNAL CONFLUENCE & FILTERS ===
+var g_confluence = "Signal Confluence System"
+var g_filters = "Signal Filters (Optional)"
+
+// === 5. ADVANCED TOOLS ===
+var g_fvg = "Fair Value Gaps (FVG)"
+var g_orderblock = "Order Blocks"
+var g_liquidity = "Liquidity Zones"
+var g_fibonacci = "Fibonacci Extensions"
+var g_fib_core = "Fibonacci Core Settings"
+var g_fib_display = "Fibonacci Display Options"
+var g_fib_golden = "Fibonacci Golden Zone"
+var g_fib_highlights = "Fibonacci Extension Highlights"
+var g_fib_additional_neg = "Additional Negative Levels"
+var g_poc = "POC (Point of Control)"
+var g_divergence = "Divergence Detection"
+var g_context = "Market Context"
+var g_gann = "Gann Fan Analysis"
+
+// === 6. VISUAL APPEARANCE (Last - Fine-tune after setup) ===
+var g_font_sizes = "Visual Appearance Settings"
+
+// ==================== INPUTS ====================
+// Set relaxed mode to false (stock mode) by default
+relaxedMode = false
+
+// === MAIN STRATEGY SELECTOR ===
+strategyMode = input.string("Disabled", "Strategy Mode", options=["EMA Crossover", "RSI Mean Reversion", "Breakout", "MACD Crossover", "Bollinger Bands", "Volume Breakout", "Disabled"], group=g_main, tooltip="Select which trading logic to use. All strategies share the same risk management system.")
+
+// === EMA Crossover Configuration ===
+emaMode = input.string("Standard", "EMA Speed", options=["Standard", "Fast", "Slow", "Custom"], group=g_ema, tooltip="Choose EMA speed:\nStandard (9/21): Balanced\nFast (7/17): More sensitive\nSlow (13/26): Less sensitive\nCustom: Set your own")
+customFastEMA = input.int(9, "Custom Fast EMA", minval=3, maxval=50, group=g_ema, tooltip="Only used in Custom mode")
+customSlowEMA = input.int(21, "Custom Slow EMA", minval=10, maxval=100, group=g_ema, tooltip="Only used in Custom mode")
+
+// Determine EMA periods based on selected mode
+emaFast = emaMode == "Standard" ? 9 : emaMode == "Fast" ? 7 : emaMode == "Slow" ? 13 : customFastEMA
+emaSlow = emaMode == "Standard" ? 21 : emaMode == "Fast" ? 17 : emaMode == "Slow" ? 26 : customSlowEMA
+
+// ==================== RISK MANAGEMENT ====================
+atrLength = input.int(14, "ATR Length for SL", minval=5, maxval=30, group=g_risk, tooltip="Period for ATR calculation used in stop loss placement")
+slMultiplier = input.float(1.0, "SL ATR Multiplier", minval=0.5, maxval=10.0, group=g_risk, tooltip="Multiplier for ATR to determine stop loss distance from entry")
+enableTP4 = input.bool(false, "Enable TP4 (1:8)", group=g_risk, tooltip="Enable fourth take profit level at 8x risk")
+enableTP5 = input.bool(false, "Enable TP5 (1:10)", group=g_risk, tooltip="Enable fifth take profit level at 10x risk")
+enableTP6 = input.bool(false, "Enable TP6 (1:12)", group=g_risk, tooltip="Enable sixth take profit level at 12x risk")
+
+// Take Profit Settings (ratios are fixed)
+tp1Ratio = 2.0
+tp2Ratio = 4.0
+tp3Ratio = 6.0
+tp4Ratio = 8.0
+tp5Ratio = 10.0
+tp6Ratio = 12.0
+
+// ==================== CHART DISPLAY ====================
+showLines = input.bool(true, "Show Entry/SL/TP Lines", group=g_display, tooltip="Display entry, stop loss, and take profit lines on the chart")
+lineLength = input.int(30, "Line Length (bars)", minval=10, maxval=100, group=g_display, tooltip="Number of bars to extend trade lines forward on the chart")
+defaultLineLength = 30  // Default line length for older trades
+showWinLossLabels = input.bool(true, "Show Win/Loss Labels on Chart", group=g_display, tooltip="Displays up to 500 individual W/L labels for trade verification")
+
+// === Table Display Controls ===
+showPerformanceTable = input.bool(true, "Show Performance Stats Table", group=g_display, tooltip="Display performance statistics table (win rates for each TP level)")
+showSignalOverviewTable = input.bool(true, "Show Signal Overview Table", group=g_display, tooltip="Display technical analysis overview (RSI, ATR, ADX, etc.)")
+showRiskManagementTable = input.bool(true, "Show Risk Management Table", group=g_display, tooltip="Display risk management summary (direction, losses, win rate, last trades)")
+
+// ==================== SIGNAL FILTERS ====================
+useRSIFilter = input.bool(false, "Use RSI Filter (Avoid Extremes)", group=g_filters, tooltip="Only allow trades when RSI is not in extreme overbought/oversold zones")
+rsiCalcPeriod = input.int(14, "RSI Length", minval=5, maxval=50, group=g_filters, tooltip="Period for RSI calculation")
+rsiOverbought = input.float(70, "RSI Overbought", minval=60, maxval=90, group=g_filters, tooltip="RSI level considered overbought")
+rsiOversold = input.float(30, "RSI Oversold", minval=10, maxval=40, group=g_filters, tooltip="RSI level considered oversold")
+volMultiplier = input.float(1.1, "Volume Multiplier", minval=1.0, maxval=3.0, group=g_filters, tooltip="Volume confirmation multiplier")
+useADXFilter = input.bool(false, "Use ADX Filter (Avoid Choppy Markets)", group=g_filters, tooltip="Only allow trades when ADX indicates trending market conditions")
+adxThreshold = input.int(20, "ADX Threshold", minval=10, maxval=50, group=g_filters, tooltip="Minimum ADX value required to confirm trending market conditions")
+
+// ==================== SIGNAL CONFLUENCE SYSTEM ====================
+enableConfluenceFilter = input.bool(false, "Enable Signal Confluence Filter", group=g_confluence, tooltip="Only execute trades with minimum confluence score for higher win rate")
+minConfluenceStars = input.int(3, "Minimum Stars Required", minval=1, maxval=5, group=g_confluence, tooltip="Minimum confluence rating (1-5 stars) required to execute trades")
+showConfluenceScore = input.bool(true, "Show Confluence Score in Tables", group=g_confluence, tooltip="Display signal confluence rating in performance tables")
+useStrategyWeighting = input.bool(true, "Use Strategy Weight Rankings", group=g_confluence, tooltip="Weight stronger strategies higher in confluence calculation")
+
+// ==================== MARKET ANALYSIS TOOLS ====================
+// === Fair Value Gaps (FVG) ===
+showFVG = input.bool(true, "Show Fair Value Gaps Boxes", group=g_fvg, tooltip="Toggle to show/hide FVG boxes on the chart")
+showFVGLabels = input.bool(false, "Show Fair Value Gaps Labels", group=g_fvg, tooltip="Toggle to show/hide FVG labels on the chart")
+fvgShowLast = input.int(2, "Show Last FVGs", minval=1, group=g_fvg, tooltip="Number of most recent FVGs to display on chart")
+filterSmallFVG = input.bool(true, "Filter: Min Size", group=g_fvg, tooltip="Filter out FVGs smaller than minimum ATR size")
+fvgATRLen = input.int(50, "ATR Length", minval=1, group=g_fvg, tooltip="Period for ATR calculation used in FVG size filtering")
+fvgATRMult = input.float(0.8, "Min Size x ATR", minval=0, step=0.1, group=g_fvg, tooltip="Minimum FVG size as ATR multiplier")
+
+// FVG Fixed Settings
+extendFVG = true // Always extend FVG until filled
+keepFilledFVG = true // Always keep filled FVGs visible
+keepFilledFVGMax = 1 // Always keep 1 filled FVG visible
+bullFVGColor = color.new(#00ff68, 80) // Bullish FVG Fill (fixed)
+bearFVGColor = color.new(#ff0008, 80) // Bearish FVG Fill (fixed)
+bullFVGLineColor = color.new(#00ff68, 0) // Bullish FVG Border (fixed)
+bearFVGLineColor = color.new(#ff0008, 0) // Bearish FVG Border (fixed)
+bullFVGColorFilled = color.new(color.gray, 80) // Bullish FVG Filled (fixed)
+bearFVGColorFilled = color.new(color.gray, 80) // Bearish FVG Filled (fixed)
+fvgSizeThreshold = filterSmallFVG ? ta.atr(fvgATRLen) * fvgATRMult : 0.0
+
+// === Order Block Detection ===
+showOrderBlockVisuals = input.bool(false, "Show Order Block Boxes", group=g_orderblock, tooltip="Toggle to show/hide order block boxes on the chart")
+showOrderBlockLabels = input.bool(false, "Show Order Block Labels", group=g_orderblock, tooltip="Toggle to show/hide order block labels on the chart")
+useOrderBlockFilter = input.bool(false, "Align with Order Block Direction", group=g_filters, tooltip="Only allow trades in the direction of the most recent order block")
+orderBlockShowLast = input.int(2, "Show Last OBs", minval=1, group=g_orderblock, tooltip="Number of most recent order blocks to display on chart")
+orderBlockExtendBars = input.int(20, "OB Box Length", minval=1, maxval=100, group=g_orderblock, tooltip="Number of bars to extend order block boxes on the chart")
+filterSmallOrderBlock = input.bool(true, "Filter: Min Size", group=g_orderblock, tooltip="Filter out order blocks smaller than minimum ATR size")
+orderBlockATRLen = input.int(50, "ATR Length", minval=1, group=g_orderblock, tooltip="Period for ATR calculation used in order block size filtering")
+orderBlockATRMult = input.float(0.8, "Min Size x ATR", minval=0, step=0.1, group=g_orderblock, tooltip="Minimum order block size as ATR multiplier")
+
+// === POC Display Settings ===
+showAllPOCLines = input.bool(true, "Show All POC Lines", group=g_poc, tooltip="Master toggle to show/hide all POC lines")
+showVolumePOC = input.bool(true, "Show Volume Profile POC", group=g_poc)
+volumePOCLookback = input.int(30, "Volume POC Lookback", group=g_poc, minval=20, maxval=200, tooltip="Number of bars to analyze for volume profile")
+showSessionPOC = input.bool(true, "Show Session POC", group=g_poc)
+showDailyPOC = input.bool(true, "Show Daily POC", group=g_poc)
+showWeeklyPOC = input.bool(false, "Show Weekly POC", group=g_poc)
+pocLineWidth = input.int(2, "POC Line Width", group=g_poc, minval=1, maxval=4)
+pocLineStyle = input.string("Dashed", "POC Line Style", group=g_poc, options=["Solid", "Dashed", "Dotted"])
+showPOCLabels = input.bool(true, "Show POC Labels", group=g_poc)
+
+// === Fibonacci Extensions ===
+showFib = input.bool(true, "Show Fibonacci Extensions", group=g_fibonacci)
+
+// Core Settings
+fibLookback = input.int(20, "Swing Detection Lookback", minval=5, maxval=100, group=g_fib_core)
+
+// Display Options
+showRetracements = input.bool(true, "Show Retracement Levels", group=g_fib_display)
+showExtensions = input.bool(true, "Show Extension Levels", group=g_fib_display)
+addNegativeLevels = input.bool(false, "Negative Levels", group=g_fib_display, tooltip="-0.27, -0.618")
+showExtendedFibLevels = input.bool(false, "Show Extended Fibonacci Levels (4.236-24.180)", group=g_fib_display, tooltip="Master toggle to enable/disable all extended Fibonacci levels. Individual level toggles can still be used for fine control.")
+fibLineStyle = input.string("Solid", "Line Style", options=["Solid", "Dashed", "Dotted"], group=g_fib_display)
+fibLineWidth = input.int(2, "Line Width", minval=1, maxval=4, group=g_fib_display)
+fibShowLabels = input.bool(true, "Show Level Labels", group=g_fib_display)
+fibExtMajorWidth = input.int(3, "Major Extension Width", minval=2, maxval=5, group=g_fib_display, tooltip="Line width for critical extension levels (0%, 100%, 161.8%, 261.8%)")
+fibExtMinorWidth = input.int(1, "Minor Extension Width", minval=1, maxval=3, group=g_fib_display, tooltip="Line width for intermediate extension levels")
+
+// Golden Zone
+showGoldenZone = input.bool(true, "Show Golden Zone Highlight", group=g_fib_golden, tooltip="Highlight the 61.8%-78.6% retracement zone (high probability reversal area)")
+goldenZoneColor = input.color(color.new(#FFD700, 85), "Golden Zone Color", group=g_fib_golden, tooltip="Color for the golden zone highlight")
+showHistoricalGoldenZones = input.bool(true, "Show Historical Golden Zones", group=g_fib_golden, tooltip="Display multiple historical golden zones from previous swings for confluence analysis")
+maxHistoricalGoldenZones = input.int(3, "Number of Zones to Keep", minval=1, maxval=30, group=g_fib_golden, tooltip="Maximum number of historical golden zones to display simultaneously")
+fadeOlderZones = input.bool(true, "Fade Older Zones", group=g_fib_golden, tooltip="Apply progressive transparency to older golden zones (newest = full opacity)")
+
+// Extension Highlights
+show1618Extension = input.bool(true, "Highlight 161.8% Extension", group=g_fib_highlights, tooltip="Highlight the 161.8% Fibonacci extension (major target zone)")
+ext1618Color = input.color(color.new(#FFD700, 70), "161.8% Extension Color", group=g_fib_highlights)
+showExtZone100 = input.bool(true, "Highlight 100% Extension Zone", group=g_fib_highlights, tooltip="Highlight the 100% Fibonacci extension (base extension level)")
+ext100Color = input.color(color.new(#00FFAA, 70), "100% Extension Color", group=g_fib_highlights)
+showExtZone261 = input.bool(true, "Highlight 261.8% Extension Zone", group=g_fib_highlights, tooltip="Highlight the 261.8% Fibonacci extension (major swing extension)")
+ext261Color = input.color(color.new(#FF9500, 70), "261.8% Extension Color", group=g_fib_highlights)
+showExtZoneNeg027 = input.bool(false, "Highlight -0.27 Extension Zone", group=g_fib_highlights, tooltip="Highlight the -0.27 Fibonacci extension zone")
+extNeg027Color = input.color(color.new(#9D27B0, 70), "-0.27 Extension Color", group=g_fib_highlights)
+showExtZoneNeg0618 = input.bool(false, "Highlight -0.618 Extension Zone", group=g_fib_highlights, tooltip="Highlight the -0.618 Fibonacci extension zone")
+extNeg0618Color = input.color(color.new(#E91E63, 70), "-0.618 Extension Color", group=g_fib_highlights)
+
+// Extended Fibonacci Levels (default OFF)
+showExtZone4236 = input.bool(false, "Highlight 4.236 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 4.236 Fibonacci extension zone")
+ext4236Color = input.color(color.new(#FF6B00, 70), "4.236 Extension Color", group=g_fib_highlights)
+showExtZone5236 = input.bool(false, "Highlight 5.236 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 5.236 Fibonacci extension zone")
+ext5236Color = input.color(color.new(#FF8800, 70), "5.236 Extension Color", group=g_fib_highlights)
+showExtZone6854 = input.bool(false, "Highlight 6.854 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 6.854 Fibonacci extension zone")
+ext6854Color = input.color(color.new(#FFAA00, 70), "6.854 Extension Color", group=g_fib_highlights)
+showExtZone7854 = input.bool(false, "Highlight 7.854 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 7.854 Fibonacci extension zone")
+ext7854Color = input.color(color.new(#FFCC00, 70), "7.854 Extension Color", group=g_fib_highlights)
+showExtZone9472 = input.bool(false, "Highlight 9.472 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 9.472 Fibonacci extension zone")
+ext9472Color = input.color(color.new(#FFEE00, 70), "9.472 Extension Color", group=g_fib_highlights)
+showExtZone11090 = input.bool(false, "Highlight 11.090 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 11.090 Fibonacci extension zone")
+ext11090Color = input.color(color.new(#FFFF33, 70), "11.090 Extension Color", group=g_fib_highlights)
+showExtZone13708 = input.bool(false, "Highlight 13.708 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 13.708 Fibonacci extension zone")
+ext13708Color = input.color(color.new(#FFFF66, 70), "13.708 Extension Color", group=g_fib_highlights)
+showExtZone16326 = input.bool(false, "Highlight 16.326 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 16.326 Fibonacci extension zone")
+ext16326Color = input.color(color.new(#FFFF99, 70), "16.326 Extension Color", group=g_fib_highlights)
+showExtZone18944 = input.bool(false, "Highlight 18.944 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 18.944 Fibonacci extension zone")
+ext18944Color = input.color(color.new(#FFFFCC, 70), "18.944 Extension Color", group=g_fib_highlights)
+showExtZone21562 = input.bool(false, "Highlight 21.562 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 21.562 Fibonacci extension zone")
+ext21562Color = input.color(color.new(#FFFFEE, 70), "21.562 Extension Color", group=g_fib_highlights)
+showExtZone24180 = input.bool(false, "Highlight 24.180 Extension Zone", group=g_fib_highlights, tooltip="Highlight the 24.180 Fibonacci extension zone")
+ext24180Color = input.color(color.new(#FFFFFF, 70), "24.180 Extension Color", group=g_fib_highlights)
+
+// Additional Negative Levels (separate from existing Negative Levels toggle)
+enableAdditionalNegLevels = input.bool(false, "Enable Additional Negative Levels", group=g_fib_additional_neg, tooltip="Master toggle for additional negative extension and retracement levels")
+
+// Additional Negative Extension Levels
+showNeg0382Ext = input.bool(false, "Show -0.382 Extension", group=g_fib_additional_neg, tooltip="Display -0.382 Fibonacci extension level")
+showNeg05Ext = input.bool(false, "Show -0.5 Extension", group=g_fib_additional_neg, tooltip="Display -0.5 Fibonacci extension level")
+showNeg0786Ext = input.bool(false, "Show -0.786 Extension", group=g_fib_additional_neg, tooltip="Display -0.786 Fibonacci extension level")
+showNeg10Ext = input.bool(false, "Show -1.0 Extension", group=g_fib_additional_neg, tooltip="Display -1.0 Fibonacci extension level (full reversal)")
+showNeg1272Ext = input.bool(false, "Show -1.272 Extension", group=g_fib_additional_neg, tooltip="Display -1.272 Fibonacci extension level")
+showNeg1618Ext = input.bool(false, "Show -1.618 Extension", group=g_fib_additional_neg, tooltip="Display -1.618 Fibonacci extension level (major reversal)")
+
+// Additional Negative Retracement Levels
+showNeg05Ret = input.bool(false, "Show -0.5 Retracement", group=g_fib_additional_neg, tooltip="Display -0.5 Fibonacci retracement level")
+showNeg0786Ret = input.bool(false, "Show -0.786 Retracement", group=g_fib_additional_neg, tooltip="Display -0.786 Fibonacci retracement level")
+
+// Highlight zones for major additional negative levels
+showExtZoneNeg10 = input.bool(false, "Highlight -1.0 Extension Zone", group=g_fib_additional_neg, tooltip="Highlight the -1.0 Fibonacci extension zone")
+extNeg10Color = input.color(color.new(#FF1744, 70), "-1.0 Extension Color", group=g_fib_additional_neg)
+showExtZoneNeg1618 = input.bool(false, "Highlight -1.618 Extension Zone", group=g_fib_additional_neg, tooltip="Highlight the -1.618 Fibonacci extension zone")
+extNeg1618Color = input.color(color.new(#C51162, 70), "-1.618 Extension Color", group=g_fib_additional_neg)
+
+// === Buy and Sell Liquidity Zones ===
+liqLookback = input.int(20, "Liquidity Lookback", minval=5, group=g_liquidity)
+lineLengthLiq = input.int(150, "Liquidity Line Length", minval=5, group=g_liquidity)
+maxLiqZones = input.int(5, "Max Zones to Display", minval=1, maxval=20, group=g_liquidity)
+
+// === RSI Mean Reversion Settings ===
+strategy2RSIOversold = input.float(30, "RSI Oversold (Buy)", minval=15, maxval=45, group=g_rsi, tooltip="RSI level to buy. Lower = more selective, higher win rate")
+strategy2RSIOverbought = input.float(70, "RSI Overbought (Sell)", minval=55, maxval=85, group=g_rsi, tooltip="RSI level to sell. Higher = more selective, higher win rate")
+usePriceLevelFilter = input.bool(false, "Require Near Support/Resistance", group=g_rsi, tooltip="Only enter when price is near local highs/lows for higher win rate")
+useStrongCandleFilter = input.bool(false, "Require Strong Candle Body", group=g_rsi, tooltip="Only enter on strong bullish/bearish candles (>50% body)")
+strategy2VolumeMultiplier = input.float(1.0, "Volume Multiplier", minval=1.0, maxval=3.0, group=g_rsi, tooltip="Multiplier for volume confirmation. Higher = more selective")
+
+// === Breakout Settings ===
+breakoutLookback = input.int(20, "Lookback Period", minval=5, maxval=50, group=g_breakout, tooltip="Number of bars to look back for breakout levels")
+
+// === MACD Settings ===
+macdFastLen = input.int(12, "Fast Length", minval=5, maxval=50, group=g_macd, tooltip="MACD fast moving average length")
+macdSlowLen = input.int(26, "Slow Length", minval=10, maxval=100, group=g_macd, tooltip="MACD slow moving average length")
+macdSigLen = input.int(9, "Signal Length", minval=5, maxval=50, group=g_macd, tooltip="MACD signal line length")
+
+// === Bollinger Bands Settings ===
+bbLength = input.int(20, "BB Length", minval=5, maxval=50, group=g_bollinger, tooltip="Bollinger Bands moving average length")
+bbStdDev = input.float(2.0, "Standard Deviation", minval=1.0, maxval=3.0, group=g_bollinger, tooltip="Number of standard deviations for bands")
+
+// === Volume Breakout Settings ===
+volumeSurgeMultiplier = input.float(2.0, "Volume Surge Multiplier", minval=1.5, maxval=5.0, group=g_volume, tooltip="Volume must be this many times average to trigger signal")
+priceStrengthATRMult = input.float(0.5, "Price Strength (x ATR)", minval=0.1, maxval=2.0, group=g_volume, tooltip="Minimum price movement in ATR terms for signal")
+
+// === Gann Fan Settings ===
+showGannFan = input.bool(true, "Show Gann Fan Lines", group=g_gann, tooltip="Toggle to show/hide Gann Fan lines on the chart")
+useAutoGannLookback = input.bool(true, "Auto-adjust lookback by timeframe", group=g_gann, tooltip="Automatically sets optimal lookback based on chart timeframe")
+manualGannLookback = input.int(50, "Manual Lookback (if auto disabled)", minval=10, maxval=500, group=g_gann, tooltip="Manual pivot lookback when auto-adjust is disabled")
+gannExtendBars = input.int(100, "Line Extension (bars)", minval=20, maxval=500, group=g_gann, tooltip="Number of bars to extend Gann Fan lines forward")
+gannLineWidth = input.int(1, "Line Width", minval=1, maxval=3, group=g_gann, tooltip="Width of Gann Fan lines")
+gannShowLabels = input.bool(false, "Show Angle Labels", group=g_gann, tooltip="Show angle degree labels on Gann Fan lines")
+// Auto-detect market type and set appropriate ATR multiplier
+instrumentType = syminfo.type
+autoGannATRMultiplier = instrumentType == "crypto" ? 15.0 :  // Crypto: more volatile
+                       instrumentType == "forex" ? 12.0 :  // Forex: moderately volatile
+                       instrumentType == "stock" ? 10.0 :  // Stock: balanced
+                       instrumentType == "indice" ? 12.0 : // Indices: moderately volatile
+                       instrumentType == "cfd" ? 13.0 :   // CFDs: variable volatility
+                       10.0  // Default fallback
+
+// Create dynamic label showing current value and market type
+marketTypeLabel = instrumentType == "crypto" ? "Crypto" :
+                 instrumentType == "forex" ? "Forex" :
+                 instrumentType == "stock" ? "Stock" :
+                 instrumentType == "indice" ? "Index" :
+                 instrumentType == "cfd" ? "CFD" :
+                 "Other"
+
+useAutoATRMultiplier = input.bool(true, "Auto Angle Steepness by Market", group=g_gann, tooltip="Automatically adjusts angle steepness based on your instrument type. Crypto gets flatter angles (15.0 for volatile markets), stocks get steeper angles (10.0 for calmer markets). Turn this off to set angles manually.")
+
+manualGannATRMultiplier = input.float(10, "Angle Steepness (Manual)", minval=5, maxval=50, group=g_gann, tooltip="Make angles flatter (higher values 15–20) for volatile markets, or steeper (lower values 5–8) for calm markets. Only active when auto mode is off.")
+
+// Use auto or manual multiplier
+gannATRMultiplier = useAutoATRMultiplier ? autoGannATRMultiplier : manualGannATRMultiplier
+
+// === Divergence Detection ===
+useDivergenceFilter = false // Divergence filter removed; always allow trades without requiring divergence confirmation
+showMFIDiv = input.bool(true, "Show MFI Divergences", group=g_divergence)
+showDivergenceDebug = input.bool(false, "Show Divergence Debug Labels", group=g_divergence)
+divergenceLookback = input.int(100, "Divergence Lookback Period", group=g_divergence, minval=5, maxval=500)
+minBarsBetween = input.int(10, "Min Bars Between Divergences", group=g_divergence, minval=1, maxval=100)
+
+// Advanced Divergence Thresholds
+rsiDivThreshold = input.float(1.5, "RSI Divergence Threshold", minval=0.01, group=g_divergence)
+priceDivThreshold = input.float(0.05, "Price Divergence Threshold", minval=0.0001, group=g_divergence)
+mfiDivThreshold = input.float(2.0, "MFI Divergence Threshold", minval=0.01, group=g_divergence)
+
+// ==================== MARKET CONTEXT ====================
+showKeyLevels = input.bool(true, "Show Session High/Low Lines", group=g_context, tooltip="Draws lines for Session High/Low")
+sessionHLlookback = input.int(10, "Session HL Lookback", minval=5, maxval=50, group=g_context)
+showSwingPoints = input.bool(true, "Show Swing Points", group=g_context)
+swingStrength = input.int(5, "Swing Point Strength", minval=2, maxval=10, group=g_context)
+
+// ==================== VISUAL APPEARANCE SETTINGS ====================
+// === Table Text Sizes ===
+tableFontSize = input.string("Small", "Table Text Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for all table text (Performance, Signal Overview, Risk Management)")
+
+// === Trade Label Sizes ===
+tradeLabelSize = input.string("Small", "Entry/SL/TP Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for trade entry, stop loss, and take profit labels")
+winLossLabelSize = input.string("Normal", "Win/Loss Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for W/L labels on chart")
+
+// === Technical Analysis Label Sizes ===
+fvgLabelSize = input.string("Tiny", "FVG Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for Fair Value Gap labels")
+orderBlockLabelSize = input.string("Tiny", "Order Block Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for Order Block labels")
+liquidityLabelSize = input.string("Tiny", "Liquidity Zone Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for Liquidity Zone labels")
+pocLabelSize = input.string("Small", "POC Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for POC (Point of Control) labels")
+gannLabelSize = input.string("Tiny", "Gann Fan Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for Gann Fan angle labels")
+
+// === Fibonacci Label Sizes ===
+fibLabelSize = input.string("Tiny", "Fibonacci Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for Fibonacci level labels")
+fibMajorLabelSize = input.string("Small", "Major Fib Level Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for major Fibonacci levels (0, 1.0, 1.618, 2.618, etc.)")
+
+// === Debug Label Sizes ===
+debugLabelSize = input.string("Tiny", "Debug Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for divergence and other debug labels")
+
+// === Market Context Label Sizes ===
+sessionLabelSize = input.string("Small", "Session High/Low Label Size", options=["Tiny", "Small", "Normal", "Large"], group=g_font_sizes, tooltip="Font size for Session High/Low labels")
+
+// ==================== VARIABLE DECLARATIONS ====================
+// Divergence tracking variables
+var int lastBullDivRSIBar = na
+var int lastBearDivRSIBar = na
+var int lastBullDivMFIBar = na
+var int lastBearDivMFIBar = na
+
+// ==================== TRADE TRACKING ====================
+// Arrays to store trade outcomes
+var float[] winTrades = array.new_float()
+var float[] loseTrades = array.new_float()
+var float[] winTradesTP2 = array.new_float()
+var float[] loseTradesTP2 = array.new_float()
+var float[] winTradesTP3 = array.new_float()
+var float[] loseTradesTP3 = array.new_float()
+var float[] winTradesTP4 = array.new_float()
+var float[] loseTradesTP4 = array.new_float()
+var float[] winTradesTP5 = array.new_float()
+var float[] loseTradesTP5 = array.new_float()
+var float[] winTradesTP6 = array.new_float()
+var float[] loseTradesTP6 = array.new_float()
+
+// === Primary Outcome Arrays ===
+// (Duplicate declarations removed – primary outcome arrays are declared once near the top of the script)
+var float[] primaryWins = array.new_float()
+var float[] primaryLosses = array.new_float()
+var bool[] primaryLogged = array.new_bool()
+
+// Multiple Trade tracking arrays
+var float[] tradeEntries = array.new_float()
+var float[] tradeSLs = array.new_float()
+var float[] tradeTP1s = array.new_float()
+var float[] tradeTP2s = array.new_float()
+var float[] tradeTP3s = array.new_float()
+var float[] tradeTP4s = array.new_float()
+var float[] tradeTP5s = array.new_float()
+var float[] tradeTP6s = array.new_float()
+var int[] tradeDirs = array.new_int()  // 1 = long, -1 = short
+var bool[] tradeActive = array.new_bool()
+var int[] tradeCreationBars = array.new_int()  // Track when each trade was created for fading
+var int[] tradeLineLengths = array.new_int()  // Store line length used for each trade (to prevent label movement)
+
+// TP Hit Tracking Arrays - Track which TPs were hit for each trade
+var bool[] tp1Hits = array.new_bool()
+var bool[] tp2Hits = array.new_bool()
+var bool[] tp3Hits = array.new_bool()
+var bool[] tp4Hits = array.new_bool()
+var bool[] tp5Hits = array.new_bool()
+var bool[] tp6Hits = array.new_bool()
+
+// Arrays for trade lines and labels (for visuals)
+var line[] entryLines = array.new_line()
+var line[] slLines = array.new_line()
+var line[] tp1Lines = array.new_line()
+var line[] tp2Lines = array.new_line()
+var line[] tp3Lines = array.new_line()
+var line[] tp4Lines = array.new_line()
+var line[] tp5Lines = array.new_line()
+var line[] tp6Lines = array.new_line()
+var label[] entryLabels = array.new_label()
+var label[] slLabels = array.new_label()
+var label[] tp1Labels = array.new_label()
+var label[] tp2Labels = array.new_label()
+var label[] tp3Labels = array.new_label()
+var label[] tp4Labels = array.new_label()
+var label[] tp5Labels = array.new_label()
+var label[] tp6Labels = array.new_label()
+
+// Helper variables for compatibility
+var float lastTradeEntry = na
+var float lastTradeSL = na
+var float lastTradeTP1 = na
+var float lastTradeTP2 = na
+var float lastTradeTP3 = na
+var float lastTradeTP4 = na
+var float lastTradeTP5 = na
+var float lastTradeTP6 = na
+var int lastTradeDir = na
+var bool tradeActiveTP1 = false
+var bool tradeActiveTP2 = false
+var bool tradeActiveTP3 = false
+var bool tradeActiveTP4 = false
+var bool tradeActiveTP5 = false
+var bool tradeActiveTP6 = false
+var int isLong = na
+var bool tp1Hit = false
+var bool tp2Hit = false
+var bool tp3Hit = false
+var bool tp4Hit = false
+var bool tp5Hit = false
+var bool tp6Hit = false
+
+// Variables to store the last potential signal for table display
+var float lastPotentialEntry = na
+var float lastPotentialSL = na
+var float lastPotentialTP1 = na
+var float lastPotentialTP2 = na
+var float lastPotentialTP3 = na
+var float lastPotentialTP4 = na
+var float lastPotentialTP5 = na
+var float lastPotentialTP6 = na
+var int lastPotentialDir = na // 1 for long, -1 = short
+var float lastPotentialConfidence = 0.0
+var string lastPotentialNote = ""
+
+// === Internal Trade State for Delay Protocol ===
+var bool internalTradeActive = false
+var float internalTradeEntry = na
+var float internalTradeSL = na
+var float internalTradeTP1 = na
+var int internalTradeDir = na
+
+// === Risk Management Tracking ===
+var int consecutiveLosses = 0
+var string[] tradeHistory = array.new_string()  // Track trades in chronological order
+
+// === Order Block Direction Tracking ===
+var int lastOBDir = na  // 1 = bullish, -1 = bearish, na = none
+
+// ==================== FONT SIZE HELPER FUNCTIONS ====================
+// Font Size Conversion Functions
+getSizeFromString(sizeStr) =>
+    switch sizeStr
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Normal" => size.normal
+        "Large" => size.large
+        => size.small
+
+// Individual size getters for each category
+getTableSize() => getSizeFromString(tableFontSize)
+getTradeLabelSize() => getSizeFromString(tradeLabelSize)
+getWinLossLabelSize() => getSizeFromString(winLossLabelSize)
+getFVGLabelSize() => getSizeFromString(fvgLabelSize)
+getOrderBlockLabelSize() => getSizeFromString(orderBlockLabelSize)
+getLiquidityLabelSize() => getSizeFromString(liquidityLabelSize)
+getPOCLabelSize() => getSizeFromString(pocLabelSize)
+getGannLabelSize() => getSizeFromString(gannLabelSize)
+getFibLabelSize() => getSizeFromString(fibLabelSize)
+getFibMajorLabelSize() => getSizeFromString(fibMajorLabelSize)
+getDebugLabelSize() => getSizeFromString(debugLabelSize)
+getSessionLabelSize() => getSizeFromString(sessionLabelSize)
+
+// === Win/Loss Label Tracking & Management Function ===
+var label[] winLossLabels = array.new_label()
+var int[] winLossBarIndexes = array.new_int()
+var float[] winLossPrices = array.new_float()
+var string[] winLossTypes = array.new_string()
+var int maxLabels = 500
+
+addWinLossLabel(barIdx, price, labelType, atrVal) =>
+    if showWinLossLabels
+        labelColor = labelType == "W" ? color.new(color.green, 20) : color.new(color.red, 20)
+        labelTextColor = color.white
+        labelStyle = labelType == "W" ? label.style_label_up : label.style_label_down
+        labelLocation = labelType == "W" ? price + (atrVal * 1.0) : price - (atrVal * 1.0)
+        newLabel = label.new(barIdx, labelLocation, labelType, color=labelColor, style=labelStyle, textcolor=labelTextColor, size=getWinLossLabelSize())
+        array.push(winLossLabels, newLabel)
+        array.push(winLossBarIndexes, barIdx)
+        array.push(winLossPrices, price)
+        array.push(winLossTypes, labelType)
+        if array.size(winLossLabels) > maxLabels
+            oldLabel = array.shift(winLossLabels)
+            label.delete(oldLabel)
+            array.shift(winLossBarIndexes)
+            array.shift(winLossPrices)
+            array.shift(winLossTypes)
+
+// === NOTE: Inline trade closing logic instead of function (Pine Script global variable restrictions) ===
+
+// ==================== LINES MANAGEMENT ====================
+var line entryLine = na
+var line slLine = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var line tp4Line = na
+var line tp5Line = na
+var line tp6Line = na
+var label entryLabel = na
+var label slLabel = na
+var label tp1Label = na
+var label tp2Label = na
+var label tp3Label = na
+var label tp4Label = na
+var label tp5Label = na
+var label tp6Label = na
+
+// ==================== GANN FAN AUTO TIMEFRAME DETECTION ====================
+var string currentTF = timeframe.period
+var int autoGannLookback = 50
+
+if currentTF == "1" or currentTF == "3"
+    autoGannLookback := 30
+else if currentTF == "5" or currentTF == "10"
+    autoGannLookback := 40
+else if currentTF == "15" or currentTF == "30"
+    autoGannLookback := 50
+else if currentTF == "60" or currentTF == "120"
+    autoGannLookback := 75
+else if currentTF == "240"
+    autoGannLookback := 100
+else if currentTF == "D"
+    autoGannLookback := 100
+else if currentTF == "W"
+    autoGannLookback := 150
+else if currentTF == "M"
+    autoGannLookback := 200
+else
+    autoGannLookback := 50
+
+gannPivotLookback = useAutoGannLookback ? autoGannLookback : manualGannLookback
+
+// ==================== CALCULATIONS ====================
+// Core Indicators
+rsi = ta.rsi(close, rsiCalcPeriod)
+mfi = ta.mfi(hlc3, 14) // Moved from later in the script to resolve scoping issues
+emaF = ta.ema(close, emaFast)
+emaS = ta.ema(close, emaSlow)
+atr = ta.atr(atrLength)
+avgVolume = ta.sma(volume, 20)
+
+// --- Stochastic Calculation for Fib Filter ---
+stochK = ta.sma(ta.stoch(close, high, low, 14), 3)
+
+// --- ADX Calculation (Pine v6 compatible) ---
+adxLen = 14
+up = high - high[1]
+down = low[1] - low
+plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+trur = ta.rma(ta.tr, adxLen)
+plusDI = 100 * ta.rma(plusDM, adxLen) / trur
+minusDI = 100 * ta.rma(minusDM, adxLen) / trur
+dx = 100 * math.abs(plusDI - minusDI) / (plusDI + minusDI)
+adx = ta.rma(dx, adxLen)
+
+// Trend Direction
+uptrend = emaF > emaS
+downtrend = emaF < emaS
+
+// Volume Confirmation
+highVolume = volume > avgVolume * volMultiplier
+
+// ==================== HELPER FUNCTIONS ====================
+// Function to get line style for POC lines
+get_poc_line_style(style_str) =>
+    switch style_str
+        'Solid' => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+        => line.style_dashed
+
+// Function to get extension color based on tier
+getExtensionColor(level, isUptrend) =>
+    // Tier 1: Critical levels (0%, 100%, 161.8%)
+    if level == 0.0 or level == 1.0 or level == 1.618
+        isUptrend ? color.new(#00FFAA, 0) : color.new(#FF6B9D, 0)  // Bright cyan/pink
+    // Tier 2: Major extensions (261.8%, 361.8%, 423.6%)
+    else if level == 2.618 or level == 3.618 or level == 4.236
+        isUptrend ? color.new(#FF9500, 0) : color.new(#FF6B00, 0)  // Orange
+    // Tier 3: Intermediate levels (0.382, 0.618, 0.5, 0.786)
+    else if level == 0.382 or level == 0.618 or level == 0.5 or level == 0.786
+        isUptrend ? color.new(#C0C0C0, 0) : color.new(#C0C0C0, 0)  // Gray
+    // Tier 4: Negative levels
+    else if level < 0
+        isUptrend ? color.new(#B19CD9, 0) : color.new(#D19CD9, 0)  // Purple/muted
+    // Default
+    else
+        isUptrend ? color.new(color.lime, 0) : color.new(color.red, 0)
+
+// Function to get extension width based on importance
+getExtensionWidth(level) =>
+    // Major levels get thicker lines
+    if level == 0.0 or level == 1.0 or level == 1.618 or level == 2.618 or level == 4.236 or level == -1.0 or level == -1.618
+        fibExtMajorWidth
+    else
+        fibExtMinorWidth
+
+// Function to calculate progressive transparency for historical golden zones
+getGoldenZoneTransparency(index, totalZones) =>
+    if not fadeOlderZones
+        85  // Default transparency if fading disabled
+    else
+        // Calculate transparency: newest (index 0) = 85, oldest = progressively more transparent
+        baseTransparency = 85
+        fadeStep = 85.0 / math.max(1, totalZones)
+        math.round(baseTransparency - (index * fadeStep))
+
+// POC Line Management
+var line volumePOCLine = na
+var line sessionPOCLine = na
+var line dailyPOCLine = na
+var line weeklyPOCLine = na
+var label volumePOCLabel = na
+var label sessionPOCLabel = na
+var label dailyPOCLabel = na
+var label weeklyPOCLabel = na
+
+// Volume Profile POC Calculation (Optimized)
+var float volumePOCPrice = na
+var int volumePOCBar = na
+
+// Calculate Volume Profile POC every 5 bars for better responsiveness
+if showVolumePOC and bar_index % 5 == 0
+    maxVolume = 0.0
+    pocPrice = 0.0
+    
+    // Find the price level with highest volume in lookback period
+    for i = 0 to math.min(volumePOCLookback, bar_index)
+        if volume[i] > maxVolume
+            maxVolume := volume[i]
+            pocPrice := close[i]
+    
+    if maxVolume > 0
+        volumePOCPrice := pocPrice
+        volumePOCBar := bar_index
+
+// Session POC Calculation (Previous Session)
+var float sessionPOC = na
+if ta.change(time("D")) != 0
+    // Calculate session POC from previous session
+    sessionPOC := (high[1] + low[1] + close[1]) / 3
+
+// Daily POC Calculation (Previous Day)
+var float dailyPOC = na
+if ta.change(time("D")) != 0
+    dailyPOC := (high[1] + low[1] + close[1]) / 3
+
+// Weekly POC Calculation (Previous Week)
+var float weeklyPOC = na
+if ta.change(time("W")) != 0
+    weeklyPOC := (high[1] + low[1] + close[1]) / 3
+
+// ==================== ADVANCED FILTER CALCULATIONS ====================
+// RSI filter conditions - Keep as is since it works well
+rsiNotOverbought = rsi < rsiOverbought - 5  // 5 points below overbought
+rsiNotOversold = rsi > rsiOversold + 5      // 5 points above oversold
+rsiInRange = rsiNotOverbought and rsiNotOversold
+
+// Enhanced volume confirmation - Improved options
+strongVolume = volume > avgVolume * (volMultiplier + 0.1)  // Reduced from 0.3 to 0.1
+
+// ==================== ENHANCED VOLUME CONFIRMATION ====================
+// Volume trend confirmation (volume increasing over last 3 bars)
+volumeTrend = volume > volume[1] and volume[1] > volume[2]
+
+// ==================== ENTRY CONDITIONS ====================
+// Simple EMA crossover strategy for clear signals
+baseLongCondition = ta.crossover(emaF, emaS)
+baseShortCondition = ta.crossunder(emaF, emaS)
+
+// ==================== SMART SIGNAL ENHANCEMENT ====================
+// Signal confidence scoring system
+var signalConfidence = 0.0
+
+// Calculate signal confidence based on advanced features
+calculateSignalConfidence(isLong) =>
+    confidence = 0.0
+    
+    // Base confidence from core strategy
+    confidence := confidence + 50.0  // EMA crossover base
+    
+    // Volume confirmation bonus
+    if highVolume
+        confidence := confidence + 20.0  // Increased from 15.0
+    if volumeTrend
+        confidence := confidence + 10.0  // New bonus for volume trend
+    
+    // RSI confirmation bonus (not extreme)
+    if rsiInRange
+        confidence := confidence + 10.0
+    
+    confidence
+
+// Loosened core logic for higher win rate
+enhancedLongCondition = ta.crossover(emaF, emaS) and rsi < rsiOverbought
+enhancedShortCondition = ta.crossunder(emaF, emaS) and rsi > rsiOversold
+
+// ==================== STRATEGY 2: RSI MEAN REVERSION (IMPROVED) ====================
+// Enhanced mean reversion with multiple filters for higher win rate
+
+// 1. RSI extreme conditions
+rsiOversoldCondition = rsi < strategy2RSIOversold
+rsiOverboughtCondition = rsi > strategy2RSIOverbought
+
+// 2. Volume confirmation (configurable)
+strongVolumeConfirmation = volume > avgVolume * strategy2VolumeMultiplier
+
+// 3. Candlestick pattern confirmation (configurable)
+strongBullishCandle = close > open and (close - open) > (high - low) * 0.5  // Strong green candle
+strongBearishCandle = close < open and (open - close) > (high - low) * 0.5  // Strong red candle
+weakBullishCandle = close > open
+weakBearishCandle = close < open
+bullishCandle = useStrongCandleFilter ? strongBullishCandle : weakBullishCandle
+bearishCandle = useStrongCandleFilter ? strongBearishCandle : weakBearishCandle
+
+// 4. Price near local lows/highs (support/resistance bounce) - configurable
+// Check if price is in bottom/top quartile of recent range (10 bars)
+recentRange = ta.highest(high, 10) - ta.lowest(low, 10)
+recentLow = ta.lowest(low, 10)
+recentHigh = ta.highest(high, 10)
+rangeQuarter = recentRange * 0.25
+nearLow = low <= recentLow + rangeQuarter  // In bottom 25% of recent range
+nearHigh = high >= recentHigh - rangeQuarter  // In top 25% of recent range
+priceNearLow = usePriceLevelFilter ? nearLow : true
+priceNearHigh = usePriceLevelFilter ? nearHigh : true
+
+// 5. RSI improving/weakening (bonus filter, not required)
+rsiImproving = rsi[1] < rsi[0]  // RSI rising (good for long)
+rsiWeakening = rsi[1] > rsi[0]  // RSI falling (good for short)
+
+// Combined conditions - much more selective
+strategy2LongCondition = rsiOversoldCondition and bullishCandle and strongVolumeConfirmation and priceNearLow
+strategy2ShortCondition = rsiOverboughtCondition and bearishCandle and strongVolumeConfirmation and priceNearHigh
+
+// ==================== STRATEGY 3: BREAKOUT ====================
+// Price breaks above/below recent high/low with volume
+strategy3LongCondition = close > ta.highest(high, breakoutLookback)[1] and volume > avgVolume
+strategy3ShortCondition = close < ta.lowest(low, breakoutLookback)[1] and volume > avgVolume
+
+// ==================== STRATEGY 4: MACD CROSSOVER ====================
+[macdLine, signalLine, _] = ta.macd(close, macdFastLen, macdSlowLen, macdSigLen)
+// Long when MACD crosses above signal (only when MACD is negative for oversold entry)
+// Short when MACD crosses below signal (only when MACD is positive for overbought entry)
+strategy4LongCondition = ta.crossover(macdLine, signalLine) and macdLine < 0
+strategy4ShortCondition = ta.crossunder(macdLine, signalLine) and macdLine > 0
+
+// ==================== STRATEGY 5: BOLLINGER BANDS MEAN REVERSION ====================
+[bbMiddle, bbUpper, bbLower] = ta.bb(close, bbLength, bbStdDev)
+// Long when price hits lower BB and RSI shows oversold but not extreme
+// Short when price hits upper BB and RSI shows overbought but not extreme
+strategy5LongCondition = close < bbLower and rsi < 40 and close > open
+strategy5ShortCondition = close > bbUpper and rsi > 60 and close < open
+
+// ==================== STRATEGY 6: VOLUME BREAKOUT ====================
+// High volume with strong price movement
+volumeSurge = volume > avgVolume * volumeSurgeMultiplier
+priceStrength = math.abs(close - open) > atr * priceStrengthATRMult
+strategy6LongCondition = volumeSurge and priceStrength and close > open and rsi < 70
+strategy6ShortCondition = volumeSurge and priceStrength and close < open and rsi > 30
+
+// ==================== FVG DETECTION (FOR FILTER) ====================
+// FVG Detection
+bullFVG = low > high[2] and (low - high[2]) >= fvgSizeThreshold
+bearFVG = high < low[2] and (low[2] - high) >= fvgSizeThreshold
+
+var box[] bullFVGBoxes = array.new_box()
+var box[] bearFVGBoxes = array.new_box()
+var line[] bullFVGCenterLines = array.new_line()
+var line[] bearFVGCenterLines = array.new_line()
+
+// Order Block storage arrays (declared early for confluence detection)
+var box[] bullOBBoxes = array.new_box()
+var box[] bearOBBoxes = array.new_box()
+var line[] bullOBCenterLines = array.new_line()
+var line[] bearOBCenterLines = array.new_line()
+var label[] bullOBLabels = array.new_label()
+var label[] bearOBLabels = array.new_label()
+
+// Create FVG boxes when detected
+if showFVG and bullFVG
+    // Create box without border
+    centerPrice = (low + high[2]) / 2
+    newBox = box.new(bar_index, low, bar_index + 50, high[2], bgcolor=bullFVGColor, border_width=0, border_style=line.style_solid, border_color=color.new(color.white, 100))
+    array.push(bullFVGBoxes, newBox)
+    
+    // Create center line (semi-transparent)
+    centerLine = line.new(bar_index, centerPrice, bar_index + 50, centerPrice, color=color.new(#00ff68, 60), width=2, style=line.style_solid)
+    array.push(bullFVGCenterLines, centerLine)
+    
+    
+    while array.size(bullFVGBoxes) > fvgShowLast
+        oldBox = array.shift(bullFVGBoxes)
+        box.delete(oldBox)
+        oldLine = array.shift(bullFVGCenterLines)
+        line.delete(oldLine)
+
+if showFVG and bearFVG  
+    // Create box without border
+    centerPrice = (high + low[2]) / 2
+    newBox = box.new(bar_index, high, bar_index + 50, low[2], bgcolor=bearFVGColor, border_width=0, border_style=line.style_solid, border_color=color.new(color.white, 100))
+    array.push(bearFVGBoxes, newBox)
+    
+    // Create center line (semi-transparent)
+    centerLine = line.new(bar_index, centerPrice, bar_index + 50, centerPrice, color=color.new(#ff0008, 60), width=2, style=line.style_solid)
+    array.push(bearFVGCenterLines, centerLine)
+    
+    
+    while array.size(bearFVGBoxes) > fvgShowLast
+        oldBox = array.shift(bearFVGBoxes)
+        box.delete(oldBox)
+        oldLine = array.shift(bearFVGCenterLines)
+        line.delete(oldLine)
+
+// === Re-calculating Divergence for Filter ===
+// This is a targeted recalculation to solve a script order (scoping) issue.
+// RSI Divergence
+priceLow_f = ta.pivotlow(low, 2, 2)
+rsiLow_f = ta.pivotlow(rsi, 2, 2)
+prevPriceLow_f = ta.valuewhen(not na(priceLow_f), low[2], 1)
+prevRsiLow_f = ta.valuewhen(not na(rsiLow_f), rsi[2], 1)
+bullDivRSI_f = (not na(priceLow_f) and not na(rsiLow_f)) and (low[2] <= prevPriceLow_f) and (rsi[2] >= prevRsiLow_f) and (math.abs(rsi[2] - prevRsiLow_f) >= rsiDivThreshold) and (math.abs(low[2] - prevPriceLow_f) >= priceDivThreshold)
+showBullDivRSI_f = bullDivRSI_f and (na(lastBullDivRSIBar) or bar_index - lastBullDivRSIBar > minBarsBetween)
+
+priceHigh_f = ta.pivothigh(high, 2, 2)
+rsiHigh_f = ta.pivothigh(rsi, 2, 2)
+prevPriceHigh_f = ta.valuewhen(not na(priceHigh_f), high[2], 1)
+prevRsiHigh_f = ta.valuewhen(not na(rsiHigh_f), rsi[2], 1)
+bearDivRSI_f = (not na(priceHigh_f) and not na(rsiHigh_f)) and (high[2] >= prevPriceHigh_f) and (rsi[2] <= prevRsiHigh_f) and (math.abs(rsi[2] - prevRsiHigh_f) >= rsiDivThreshold) and (math.abs(high[2] - prevPriceHigh_f) >= priceDivThreshold)
+showBearDivRSI_f = bearDivRSI_f and (na(lastBearDivRSIBar) or bar_index - lastBearDivRSIBar > minBarsBetween)
+
+// MFI Divergence
+priceLowMFI_f = ta.pivotlow(low, 2, 2)
+mfiLow_f = ta.pivotlow(mfi, 2, 2)
+prevPriceLowMFI_f = ta.valuewhen(not na(priceLowMFI_f), low[2], 1)
+prevMfiLow_f = ta.valuewhen(not na(mfiLow_f), mfi[2], 1)
+bullDivMFI_f = (not na(priceLowMFI_f) and not na(mfiLow_f)) and (low[2] <= prevPriceLowMFI_f) and (mfi[2] >= prevMfiLow_f) and (math.abs(mfi[2] - prevMfiLow_f) >= mfiDivThreshold) and (math.abs(low[2] - prevPriceLowMFI_f) >= priceDivThreshold)
+showBullDivMFI_f = bullDivMFI_f and (na(lastBullDivMFIBar) or bar_index - lastBullDivMFIBar > minBarsBetween)
+
+priceHighMFI_f = ta.pivothigh(high, 2, 2)
+mfiHigh_f = ta.pivothigh(mfi, 2, 2)
+prevPriceHighMFI_f = ta.valuewhen(not na(priceHighMFI_f), high[2], 1)
+prevMfiHigh_f = ta.valuewhen(not na(mfiHigh_f), mfi[2], 1)
+bearDivMFI_f = (not na(priceHighMFI_f) and not na(mfiHigh_f)) and (high[2] >= prevPriceHighMFI_f) and (mfi[2] <= prevMfiHigh_f) and (math.abs(mfi[2] - prevMfiHigh_f) >= mfiDivThreshold) and (math.abs(high[2] - prevPriceHighMFI_f) >= priceDivThreshold)
+showBearDivMFI_f = bearDivMFI_f and (na(lastBearDivMFIBar) or bar_index - lastBearDivMFIBar > minBarsBetween)
+
+// === Divergence Filter Logic ===
+bullishDivergenceSpotted = showBullDivRSI_f or (showMFIDiv and showBullDivMFI_f)
+barsSinceBullDiv = ta.barssince(bullishDivergenceSpotted)
+bullishDivergenceConfirmed = barsSinceBullDiv <= divergenceLookback
+
+bearishDivergenceSpotted = showBearDivRSI_f or (showMFIDiv and showBearDivMFI_f)
+barsSinceBearDiv = ta.barssince(bearishDivergenceSpotted)
+bearishDivergenceConfirmed = barsSinceBearDiv <= divergenceLookback
+
+// Define trade conditions
+longCondition = enhancedLongCondition and 
+                         (relaxedMode or (not useADXFilter or adx > adxThreshold)) and
+                         (not useRSIFilter or rsiInRange) and
+                         (not useDivergenceFilter or bullishDivergenceConfirmed) and
+                         (not useOrderBlockFilter or lastOBDir == 1 or na(lastOBDir))
+
+shortCondition = enhancedShortCondition and 
+                          (relaxedMode or (not useADXFilter or adx > adxThreshold)) and
+                          (not useRSIFilter or rsiInRange) and
+                          (not useDivergenceFilter or bearishDivergenceConfirmed) and
+                          (not useOrderBlockFilter or lastOBDir == -1 or na(lastOBDir))
+
+// ==================== CONFLUENCE FUNCTIONS ====================
+// Strategy weight rankings (higher weight = more reliable)
+getStrategyWeight(strategyName) =>
+    switch strategyName
+        "Volume Breakout" => 5.0      // Highest reliability - volume + price strength
+        "RSI Mean Reversion" => 4.5   // High - mean reversion with multiple filters
+        "Breakout" => 4.0             // Good - clear support/resistance breaks
+        "MACD Crossover" => 3.5       // Decent - momentum confirmation
+        "Bollinger Bands" => 3.0      // Moderate - mean reversion
+        "EMA Crossover" => 2.5        // Lower - trend following but can lag
+        => 2.0
+
+// Calculate confluence score for current market conditions
+calculateConfluenceScore(isLong) =>
+    score = 0.0
+    maxScore = 0.0
+    
+    // ALWAYS check all strategies for confluence (regardless of strategyMode)
+    // This gives a true measure of how many strategies are agreeing
+    
+    // EMA Crossover Strategy
+    stratWeight = getStrategyWeight("EMA Crossover")
+    maxScore := maxScore + stratWeight
+    if (isLong and longCondition) or (not isLong and shortCondition)
+        score := score + stratWeight
+    
+    // RSI Mean Reversion Strategy  
+    stratWeight := getStrategyWeight("RSI Mean Reversion")
+    maxScore := maxScore + stratWeight
+    if (isLong and strategy2LongCondition) or (not isLong and strategy2ShortCondition)
+        score := score + stratWeight
+            
+    // Breakout Strategy
+    stratWeight := getStrategyWeight("Breakout")
+    maxScore := maxScore + stratWeight
+    if (isLong and strategy3LongCondition) or (not isLong and strategy3ShortCondition)
+        score := score + stratWeight
+            
+    // MACD Crossover Strategy
+    stratWeight := getStrategyWeight("MACD Crossover")
+    maxScore := maxScore + stratWeight
+    if (isLong and strategy4LongCondition) or (not isLong and strategy4ShortCondition)
+        score := score + stratWeight
+            
+    // Bollinger Bands Strategy
+    stratWeight := getStrategyWeight("Bollinger Bands")
+    maxScore := maxScore + stratWeight
+    if (isLong and strategy5LongCondition) or (not isLong and strategy5ShortCondition)
+        score := score + stratWeight
+            
+    // Volume Breakout Strategy
+    stratWeight := getStrategyWeight("Volume Breakout")
+    maxScore := maxScore + stratWeight
+    if (isLong and strategy6LongCondition) or (not isLong and strategy6ShortCondition)
+        score := score + stratWeight
+    
+    // Additional confirmation bonuses (when multiple strategies agree)
+    if highVolume
+        score := score + 0.5
+        maxScore := maxScore + 0.5
+    if rsiInRange
+        score := score + 0.3
+        maxScore := maxScore + 0.3
+    if adx > adxThreshold
+        score := score + 0.2
+        maxScore := maxScore + 0.2
+    
+    // Convert to 1-5 star rating with more realistic thresholds
+    if maxScore <= 0
+        0
+    else
+        percentage = (score / maxScore) * 100
+        if percentage >= 75
+            5  // ⭐⭐⭐⭐⭐ (Most strategies agreeing)
+        else if percentage >= 55
+            4  // ⭐⭐⭐⭐ (Good agreement)
+        else if percentage >= 35
+            3  // ⭐⭐⭐ (Some agreement)
+        else if percentage >= 20
+            2  // ⭐⭐ (Weak agreement)
+        else if percentage >= 5
+            1  // ⭐ (Very weak)
+        else
+            0  // No stars
+
+// Get star display string
+getStarsString(rating) =>
+    switch rating
+        5 => "⭐⭐⭐⭐⭐"
+        4 => "⭐⭐⭐⭐"
+        3 => "⭐⭐⭐"
+        2 => "⭐⭐"
+        1 => "⭐"
+        => ""
+
+// Calculate current confluence scores (moved to after strategy definitions)
+var int currentConfluenceRating = 0
+longConfluenceRating = calculateConfluenceScore(true)
+shortConfluenceRating = calculateConfluenceScore(false)
+
+// ==================== COMBINED STRATEGY CONDITIONS ====================
+// Base strategy conditions (before confluence filtering)
+baseStrategyLongCondition = (strategyMode == "EMA Crossover" and longCondition) or (strategyMode == "RSI Mean Reversion" and strategy2LongCondition) or (strategyMode == "Breakout" and strategy3LongCondition) or (strategyMode == "MACD Crossover" and strategy4LongCondition) or (strategyMode == "Bollinger Bands" and strategy5LongCondition) or (strategyMode == "Volume Breakout" and strategy6LongCondition)
+
+baseStrategyShortCondition = (strategyMode == "EMA Crossover" and shortCondition) or (strategyMode == "RSI Mean Reversion" and strategy2ShortCondition) or (strategyMode == "Breakout" and strategy3ShortCondition) or (strategyMode == "MACD Crossover" and strategy4ShortCondition) or (strategyMode == "Bollinger Bands" and strategy5ShortCondition) or (strategyMode == "Volume Breakout" and strategy6ShortCondition)
+
+// Apply confluence filtering to final conditions
+confluencePassesLong = not enableConfluenceFilter or longConfluenceRating >= minConfluenceStars
+confluencePassesShort = not enableConfluenceFilter or shortConfluenceRating >= minConfluenceStars
+
+// Final conditions with confluence filter
+finalLongCondition = baseStrategyLongCondition and confluencePassesLong
+finalShortCondition = baseStrategyShortCondition and confluencePassesShort
+
+// Calculate confidence and confluence for potential signals
+if finalLongCondition
+    signalConfidence := calculateSignalConfidence(true)
+    currentConfluenceRating := longConfluenceRating
+else if finalShortCondition
+    signalConfidence := calculateSignalConfidence(false)
+    currentConfluenceRating := shortConfluenceRating
+else
+    signalConfidence := 0.0
+    currentConfluenceRating := 0
+
+// ==================== RISK MANAGEMENT & DATA SNAPSHOT ====================
+// This section now calculates and stores a snapshot of data ONLY when a potential signal occurs.
+if finalLongCondition or finalShortCondition
+    // 1. Calculate Signal Confidence
+    currentSignalConfidence = finalLongCondition ? calculateSignalConfidence(true) : calculateSignalConfidence(false)
+    lastPotentialConfidence := currentSignalConfidence
+
+    // 2. Calculate Adaptive Levels
+    stopDistance = atr * slMultiplier
+    confidenceMultiplier = currentSignalConfidence >= 80 ? 1.2 : currentSignalConfidence >= 70 ? 1.1 : currentSignalConfidence >= 60 ? 1.0 : 0.9
+    adaptiveStopDistance = stopDistance * confidenceMultiplier
+    
+    currentEntryPrice = close
+    
+    // Use local scope for calculation; these do not conflict with global SL/TPs
+    float calcLongSL = currentEntryPrice - adaptiveStopDistance
+    float calcLongTP1 = currentEntryPrice + (adaptiveStopDistance * tp1Ratio)
+    float calcLongTP2 = currentEntryPrice + (adaptiveStopDistance * tp2Ratio)
+    float calcLongTP3 = currentEntryPrice + (adaptiveStopDistance * tp3Ratio)
+    float calcLongTP4 = currentEntryPrice + (adaptiveStopDistance * tp4Ratio)
+    float calcLongTP5 = currentEntryPrice + (adaptiveStopDistance * tp5Ratio)
+    float calcLongTP6 = currentEntryPrice + (adaptiveStopDistance * tp6Ratio)
+
+    float calcShortSL = currentEntryPrice + adaptiveStopDistance
+    float calcShortTP1 = currentEntryPrice - (adaptiveStopDistance * tp1Ratio)
+    float calcShortTP2 = currentEntryPrice - (adaptiveStopDistance * tp2Ratio)
+    float calcShortTP3 = currentEntryPrice - (adaptiveStopDistance * tp3Ratio)
+    float calcShortTP4 = currentEntryPrice - (adaptiveStopDistance * tp4Ratio)
+    float calcShortTP5 = currentEntryPrice - (adaptiveStopDistance * tp5Ratio)
+    float calcShortTP6 = currentEntryPrice - (adaptiveStopDistance * tp6Ratio)
+
+    // 3. Store Potential Trade Info
+    lastPotentialEntry := currentEntryPrice
+    lastPotentialDir := finalLongCondition ? 1 : -1
+    lastPotentialSL := finalLongCondition ? calcLongSL : calcShortSL
+    lastPotentialTP1 := finalLongCondition ? calcLongTP1 : calcShortTP1
+    lastPotentialTP2 := finalLongCondition ? calcLongTP2 : calcShortTP2
+    lastPotentialTP3 := finalLongCondition ? calcLongTP3 : calcShortTP3
+    lastPotentialTP4 := finalLongCondition ? calcLongTP4 : calcShortTP4
+    lastPotentialTP5 := finalLongCondition ? calcLongTP5 : calcShortTP5
+    lastPotentialTP6 := finalLongCondition ? calcLongTP6 : calcShortTP6
+    
+    // 4. Generate and Store the Note String with Confluence Score
+    confluenceRating = finalLongCondition ? longConfluenceRating : shortConfluenceRating
+    confluenceStars = getStarsString(confluenceRating)
+    
+    lastPotentialNote := "Signal Strength: " + confluenceStars + " (" + str.tostring(confluenceRating) + "/5)" + "\nRSI: " + str.tostring(rsi, "#.##") + " | " + (rsi > rsiOverbought ? "OB" : rsi < rsiOversold ? "OS" : "N") + "\nATR: " + str.tostring(atr, "#.##") + " | Vol: " + (highVolume ? "H" : "L") + "\nADX: " + str.tostring(adx, "#.##") + (useADXFilter ? " (F)" : "") + "\nEMA: " + (baseLongCondition ? "B" : baseShortCondition ? "S" : "-") + (useADXFilter and baseLongCondition and adx <= adxThreshold ? " (A)" : "") + "\nConfidence: " + str.tostring(lastPotentialConfidence, "#.#") + "%" + " | Vol Trend: " + (volumeTrend ? "↑" : "↓")
+
+// ==================== SIGNAL PROCESSING ====================
+// Plot EMAs
+plot(emaF, "Fast EMA", color=color.new(color.aqua, 0), linewidth=2)
+plot(emaS, "Slow EMA", color=color.new(color.orange, 0), linewidth=2)
+
+// Plot RSI and Signal Confidence for alerts
+plot(rsi, "RSI", color=color.new(color.purple, 100), display=display.none)
+plot(signalConfidence, "Signal Confidence", color=color.new(color.blue, 100), display=display.none)
+
+// Fill between EMAs
+fill(plot(emaF, display=display.none), plot(emaS, display=display.none), color=uptrend ? color.new(color.green, 90) : color.new(color.red, 90))
+
+// Background color when trade delay is active
+
+// ==================== DIVERGENCE DETECTION (RSI) ====================
+pivotLen = 2
+priceLow = ta.pivotlow(low, pivotLen, pivotLen)
+priceHigh = ta.pivothigh(high, pivotLen, pivotLen)
+rsiLow = ta.pivotlow(rsi, pivotLen, pivotLen)
+rsiHigh = ta.pivothigh(rsi, pivotLen, pivotLen)
+
+// Move valuewhen calls outside if blocks
+prevPriceLow = ta.valuewhen(not na(priceLow), low[pivotLen], 1)
+prevRsiLow = ta.valuewhen(not na(rsiLow), rsi[pivotLen], 1)
+prevPriceHigh = ta.valuewhen(not na(priceHigh), high[pivotLen], 1)
+prevRsiHigh = ta.valuewhen(not na(rsiHigh), rsi[pivotLen], 1)
+
+// Debug information for RSI pivots
+if showDivergenceDebug and not na(priceLow)
+    label.new(bar_index - pivotLen, low[pivotLen], "PL", color=color.new(color.yellow, 80), style=label.style_label_up, textcolor=color.yellow, size=getDebugLabelSize())
+if showDivergenceDebug and not na(priceHigh)
+    label.new(bar_index - pivotLen, high[pivotLen], "PH", color=color.new(color.yellow, 80), style=label.style_label_down, textcolor=color.yellow, size=getDebugLabelSize())
+if showDivergenceDebug and not na(rsiLow)
+    label.new(bar_index - pivotLen, low[pivotLen] - ta.atr(14) * 0.2, "RL", color=color.new(color.orange, 80), style=label.style_label_up, textcolor=color.orange, size=getDebugLabelSize())
+if showDivergenceDebug and not na(rsiHigh)
+    label.new(bar_index - pivotLen, high[pivotLen] + ta.atr(14) * 0.2, "RH", color=color.new(color.orange, 80), style=label.style_label_down, textcolor=color.orange, size=getDebugLabelSize())
+
+var bullDivRSI = false
+if not na(priceLow) and not na(rsiLow)
+    priceDiff = math.abs(low[pivotLen] - prevPriceLow)
+    rsiDiff = math.abs(rsi[pivotLen] - prevRsiLow)
+    bullDivRSI := (low[pivotLen] <= prevPriceLow) and (rsi[pivotLen] >= prevRsiLow) and (rsiDiff >= rsiDivThreshold) and (priceDiff >= priceDivThreshold)
+    
+    // Debug information for bullish RSI divergence testing
+    if showDivergenceDebug
+        debugText = "RSI Bull Test:" + 
+                   "\nCurr: " + str.tostring(low[pivotLen], "#.####") + " | " + str.tostring(rsi[pivotLen], "#.##") +
+                   "\nPrev: " + str.tostring(prevPriceLow, "#.####") + " | " + str.tostring(prevRsiLow, "#.##") +
+                   "\nDiff: " + str.tostring(priceDiff, "#.####") + " | " + str.tostring(rsiDiff, "#.##") +
+                   "\nThresh: " + str.tostring(priceDivThreshold, "#.####") + " | " + str.tostring(rsiDivThreshold, "#.##") +
+                   "\nResult: " + (bullDivRSI ? "TRUE" : "FALSE")
+        label.new(bar_index, low - ta.atr(14) * 2.0, debugText, color=color.new(color.white, 80), style=label.style_label_up, textcolor=color.white, size=getDebugLabelSize())
+
+var bearDivRSI = false
+if not na(priceHigh) and not na(rsiHigh)
+    priceDiff = math.abs(high[pivotLen] - prevPriceHigh)
+    rsiDiff = math.abs(rsi[pivotLen] - prevRsiHigh)
+    bearDivRSI := (high[pivotLen] >= prevPriceHigh) and (rsi[pivotLen] <= prevRsiHigh) and (rsiDiff >= rsiDivThreshold) and (priceDiff >= priceDivThreshold)
+    
+    // Debug information for bearish RSI divergence testing
+    if showDivergenceDebug
+        debugText = "RSI Bear Test:" + 
+                   "\nCurr: " + str.tostring(high[pivotLen], "#.####") + " | " + str.tostring(rsi[pivotLen], "#.##") +
+                   "\nPrev: " + str.tostring(prevPriceHigh, "#.####") + " | " + str.tostring(prevRsiHigh, "#.##") +
+                   "\nDiff: " + str.tostring(priceDiff, "#.####") + " | " + str.tostring(rsiDiff, "#.##") +
+                   "\nThresh: " + str.tostring(priceDivThreshold, "#.####") + " | " + str.tostring(rsiDivThreshold, "#.##") +
+                   "\nResult: " + (bearDivRSI ? "TRUE" : "FALSE")
+        label.new(bar_index, high + ta.atr(14) * 2.0, debugText, color=color.new(color.white, 80), style=label.style_label_down, textcolor=color.white, size=getDebugLabelSize())
+
+showBullDivRSI = bullDivRSI and (na(lastBullDivRSIBar) or bar_index - lastBullDivRSIBar > minBarsBetween)
+if showBullDivRSI
+    lastBullDivRSIBar := bar_index
+
+showBearDivRSI = bearDivRSI and (na(lastBearDivRSIBar) or bar_index - lastBearDivRSIBar > minBarsBetween)
+if showBearDivRSI
+    lastBearDivRSIBar := bar_index
+
+// Plot RSI divergence signals
+plotshape(showBullDivRSI, style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.normal, title="Bullish RSI Divergence")
+plotshape(showBearDivRSI, style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.normal, title="Bearish RSI Divergence")
+
+// Debug labels for RSI divergence
+if showDivergenceDebug and showBullDivRSI
+    label.new(bar_index, low - ta.atr(14) * 0.5, "RSI BULL DIV", color=color.new(color.lime, 80), style=label.style_label_up, textcolor=color.lime, size=getDebugLabelSize())
+if showDivergenceDebug and showBearDivRSI
+    label.new(bar_index, high + ta.atr(14) * 0.5, "RSI BEAR DIV", color=color.new(color.red, 80), style=label.style_label_down, textcolor=color.red, size=getDebugLabelSize())
+
+// ==================== SIGNAL ARROWS & LINES ====================
+// Track last signal
+var float lastEntry = na
+var float lastSL = na
+var float lastTP1 = na
+var float lastTP2 = na
+var float lastTP3 = na
+var float lastTP4 = na
+var float lastTP5 = na
+var float lastTP6 = na
+
+// === TRADE EXECUTION LOGIC (MULTIPLE TRADES ALLOWED) ===
+// Add cooldown to prevent rapid consecutive entries
+var int lastLongEntryBar = na
+var int lastShortEntryBar = na
+int entryCooldown = 5  // Minimum bars between entries
+
+// Signal reset tracking - wait for condition to go false before allowing new trade
+var bool lastLongCondition = false
+var bool lastShortCondition = false
+var bool waitingForLongReset = false
+var bool waitingForShortReset = false
+
+// Track previous bar conditions to detect true crossovers
+lastLongCondition := finalLongCondition
+lastShortCondition := finalShortCondition
+
+// Update signal reset tracking
+if not finalLongCondition and waitingForLongReset
+    waitingForLongReset := false
+if not finalShortCondition and waitingForShortReset
+    waitingForShortReset := false
+
+// Soft reset: clear waiting flag as soon as the original signal is no longer present
+if waitingForLongReset and not finalLongCondition
+    waitingForLongReset := false
+if waitingForShortReset and not finalShortCondition
+    waitingForShortReset := false
+
+canEnterLong = na(lastLongEntryBar) or (bar_index - lastLongEntryBar) >= entryCooldown
+canEnterShort = na(lastShortEntryBar) or (bar_index - lastShortEntryBar) >= entryCooldown
+
+// Allow multiple concurrent trades
+canOpenNewTrade = true
+
+if finalLongCondition and not lastLongCondition[1] and canEnterLong and canOpenNewTrade
+    // Capture the entry at the bar's OPEN so it never changes intrabar
+    actualEntryPrice = open
+    actualSL = actualEntryPrice - (atr * slMultiplier)
+    actualTP1 = actualEntryPrice + (atr * slMultiplier * tp1Ratio)
+    actualTP2 = actualEntryPrice + (atr * slMultiplier * tp2Ratio)
+    actualTP3 = actualEntryPrice + (atr * slMultiplier * tp3Ratio)
+    actualTP4 = actualEntryPrice + (atr * slMultiplier * tp4Ratio)
+    actualTP5 = actualEntryPrice + (atr * slMultiplier * tp5Ratio)
+    actualTP6 = actualEntryPrice + (atr * slMultiplier * tp6Ratio)
+    
+    // Add new long trade to arrays using actual prices
+    array.push(tradeEntries, actualEntryPrice)
+    array.push(tradeSLs, actualSL)
+    array.push(tradeTP1s, actualTP1)
+    array.push(tradeTP2s, actualTP2)
+    array.push(tradeTP3s, actualTP3)
+    array.push(tradeTP4s, actualTP4)
+    array.push(tradeTP5s, actualTP5)
+    array.push(tradeTP6s, actualTP6)
+    array.push(tradeDirs, 1)  // 1 = long
+    array.push(tradeActive, true)
+    array.push(tradeCreationBars, bar_index)
+    
+    // Update last entry bar
+    lastLongEntryBar := bar_index
+    
+    // Initialize TP hit tracking for this trade
+    array.push(tp1Hits, false)
+    array.push(tp2Hits, false)
+    array.push(tp3Hits, false)
+    array.push(tp4Hits, false)
+    array.push(tp5Hits, false)
+    array.push(tp6Hits, false)
+    // Track that the primary outcome has not yet been logged for this trade
+    array.push(primaryLogged, false)
+    
+    // Create entry line and label for this trade (only once)
+    if showLines
+        tradeIndex = array.size(tradeEntries) - 1
+        entryPrice = array.get(tradeEntries, tradeIndex)
+        tradeSL = array.get(tradeSLs, tradeIndex)
+        tradeTP1 = array.get(tradeTP1s, tradeIndex)
+        tradeTP2 = array.get(tradeTP2s, tradeIndex)
+        tradeTP3 = array.get(tradeTP3s, tradeIndex)
+        tradeTP4 = array.get(tradeTP4s, tradeIndex)
+        tradeTP5 = array.get(tradeTP5s, tradeIndex)
+        tradeTP6 = array.get(tradeTP6s, tradeIndex)
+        
+        // Use the EXACT bar where trade opened and EXACT entry price - never update these
+        tradeOpenBar = bar_index
+        
+        // Determine line length: use custom setting for 2 most recent trades, default for older trades
+        currentLineLength = tradeIndex >= array.size(tradeEntries) - 2 ? lineLength : defaultLineLength
+        // Store this line length for this trade so labels don't move when setting changes
+        array.push(tradeLineLengths, currentLineLength)
+        
+        // Declare line and label variables
+        var line newEntryLine = na
+        var line newSLLine = na
+        var line newTP1Line = na
+        var line newTP2Line = na
+        var line newTP3Line = na
+        var line newTP4Line = na
+        var line newTP5Line = na
+        var line newTP6Line = na
+        var label newEntryLabel = na
+        var label newSLLabel = na
+        var label newTP1Label = na
+        var label newTP2Label = na
+        var label newTP3Label = na
+        var label newTP4Label = na
+        var label newTP5Label = na
+        var label newTP6Label = na
+        
+        // Create static lines anchored to the trade open bar and exact prices (only if showLines is enabled)
+        if showLines
+            newEntryLine = line.new(tradeOpenBar, entryPrice, tradeOpenBar + currentLineLength, entryPrice, color=color.new(color.blue, 0), width=2, style=line.style_solid, extend=extend.none)
+            newSLLine = line.new(tradeOpenBar, tradeSL, tradeOpenBar + currentLineLength, tradeSL, color=color.new(color.red, 0), width=2, style=line.style_dashed, extend=extend.none)
+            newTP1Line = line.new(tradeOpenBar, tradeTP1, tradeOpenBar + currentLineLength, tradeTP1, color=color.new(color.green, 0), width=2, style=line.style_dotted, extend=extend.none)
+            newTP2Line = line.new(tradeOpenBar, tradeTP2, tradeOpenBar + currentLineLength, tradeTP2, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+            newTP3Line = line.new(tradeOpenBar, tradeTP3, tradeOpenBar + currentLineLength, tradeTP3, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+            newTP4Line = enableTP4 ? line.new(tradeOpenBar, tradeTP4, tradeOpenBar + currentLineLength, tradeTP4, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+            newTP5Line = enableTP5 ? line.new(tradeOpenBar, tradeTP5, tradeOpenBar + currentLineLength, tradeTP5, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+            newTP6Line = enableTP6 ? line.new(tradeOpenBar, tradeTP6, tradeOpenBar + currentLineLength, tradeTP6, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+            
+            // Add lines to arrays
+            array.push(entryLines, newEntryLine)
+            array.push(slLines, newSLLine)
+            array.push(tp1Lines, newTP1Line)
+            array.push(tp2Lines, newTP2Line)
+            array.push(tp3Lines, newTP3Line)
+            array.push(tp4Lines, newTP4Line)
+            array.push(tp5Lines, newTP5Line)
+            array.push(tp6Lines, newTP6Line)
+        
+        // Create static labels anchored to the trade open bar and exact prices (only if showLines is enabled)
+        if showLines
+            newEntryLabel = label.new(tradeOpenBar + currentLineLength, entryPrice, "ENTRY: " + str.tostring(entryPrice, format.mintick), color=color.new(color.blue, 100), style=label.style_label_left, textcolor=color.blue, size=getTradeLabelSize())
+            newSLLabel = label.new(tradeOpenBar + currentLineLength, tradeSL, "SL: " + str.tostring(tradeSL, format.mintick), color=color.new(color.red, 100), style=label.style_label_left, textcolor=color.red, size=getTradeLabelSize())
+            newTP1Label = label.new(tradeOpenBar + currentLineLength, tradeTP1, "TP1: " + str.tostring(tradeTP1, format.mintick), color=color.new(color.green, 100), style=label.style_label_left, textcolor=color.green, size=getTradeLabelSize())
+            newTP2Label = label.new(tradeOpenBar + currentLineLength, tradeTP2, "TP2: " + str.tostring(tradeTP2, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize())
+            newTP3Label = label.new(tradeOpenBar + currentLineLength, tradeTP3, "TP3: " + str.tostring(tradeTP3, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize())
+            newTP4Label = enableTP4 ? label.new(tradeOpenBar + currentLineLength, tradeTP4, "TP4: " + str.tostring(tradeTP4, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+            newTP5Label = enableTP5 ? label.new(tradeOpenBar + currentLineLength, tradeTP5, "TP5: " + str.tostring(tradeTP5, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+            newTP6Label = enableTP6 ? label.new(tradeOpenBar + currentLineLength, tradeTP6, "TP6: " + str.tostring(tradeTP6, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+            
+            // Add labels to arrays
+            array.push(entryLabels, newEntryLabel)
+            array.push(slLabels, newSLLabel)
+            array.push(tp1Labels, newTP1Label)
+            array.push(tp2Labels, newTP2Label)
+            array.push(tp3Labels, newTP3Label)
+            array.push(tp4Labels, newTP4Label)
+            array.push(tp5Labels, newTP5Label)
+            array.push(tp6Labels, newTP6Label)
+    
+    // Update compatibility variables with latest trade
+    lastTradeEntry := actualEntryPrice
+    lastTradeSL := actualSL
+    lastTradeTP1 := actualTP1
+    lastTradeTP2 := actualTP2
+    lastTradeTP3 := actualTP3
+    lastTradeTP4 := actualTP4
+    lastTradeTP5 := actualTP5
+    lastTradeTP6 := actualTP6
+    lastTradeDir := 1
+    isLong := 1
+    
+    // Update active flags for compatibility
+    tradeActiveTP1 := true
+    tradeActiveTP2 := true
+    tradeActiveTP3 := true
+    tradeActiveTP4 := enableTP4
+    tradeActiveTP5 := enableTP5
+    tradeActiveTP6 := enableTP6
+
+if finalShortCondition and not lastShortCondition[1] and canEnterShort and canOpenNewTrade
+    // Capture the entry at the bar's OPEN so it never changes intrabar
+    actualEntryPrice = open
+    actualSL = actualEntryPrice + (atr * slMultiplier)
+    actualTP1 = actualEntryPrice - (atr * slMultiplier * tp1Ratio)
+    actualTP2 = actualEntryPrice - (atr * slMultiplier * tp2Ratio)
+    actualTP3 = actualEntryPrice - (atr * slMultiplier * tp3Ratio)
+    actualTP4 = actualEntryPrice - (atr * slMultiplier * tp4Ratio)
+    actualTP5 = actualEntryPrice - (atr * slMultiplier * tp5Ratio)
+    actualTP6 = actualEntryPrice - (atr * slMultiplier * tp6Ratio)
+    
+    // Add new short trade to arrays using actual prices
+    array.push(tradeEntries, actualEntryPrice)
+    array.push(tradeSLs, actualSL)
+    array.push(tradeTP1s, actualTP1)
+    array.push(tradeTP2s, actualTP2)
+    array.push(tradeTP3s, actualTP3)
+    array.push(tradeTP4s, actualTP4)
+    array.push(tradeTP5s, actualTP5)
+    array.push(tradeTP6s, actualTP6)
+    array.push(tradeDirs, -1)  // -1 = short
+    array.push(tradeActive, true)
+    array.push(tradeCreationBars, bar_index)
+    
+    // Update last entry bar
+    lastShortEntryBar := bar_index
+    
+    // Initialize TP hit tracking for this trade
+    array.push(tp1Hits, false)
+    array.push(tp2Hits, false)
+    array.push(tp3Hits, false)
+    array.push(tp4Hits, false)
+    array.push(tp5Hits, false)
+    array.push(tp6Hits, false)
+    // Track that the primary outcome has not yet been logged for this trade (short)
+    array.push(primaryLogged, false)
+    
+    // Create entry line and label for this trade (only once)
+    if showLines
+        tradeIndex = array.size(tradeEntries) - 1
+        entryPrice = array.get(tradeEntries, tradeIndex)
+        tradeSL = array.get(tradeSLs, tradeIndex)
+        tradeTP1 = array.get(tradeTP1s, tradeIndex)
+        tradeTP2 = array.get(tradeTP2s, tradeIndex)
+        tradeTP3 = array.get(tradeTP3s, tradeIndex)
+        tradeTP4 = array.get(tradeTP4s, tradeIndex)
+        tradeTP5 = array.get(tradeTP5s, tradeIndex)
+        tradeTP6 = array.get(tradeTP6s, tradeIndex)
+        
+        // Use the EXACT bar where trade opened and EXACT entry price - never update these
+        tradeOpenBar = bar_index
+        
+        // Determine line length: use custom setting for 2 most recent trades, default for older trades
+        currentLineLength = tradeIndex >= array.size(tradeEntries) - 2 ? lineLength : defaultLineLength
+        // Store this line length for this trade so labels don't move when setting changes
+        array.push(tradeLineLengths, currentLineLength)
+        
+        // Declare line and label variables
+        var line newEntryLine = na
+        var line newSLLine = na
+        var line newTP1Line = na
+        var line newTP2Line = na
+        var line newTP3Line = na
+        var line newTP4Line = na
+        var line newTP5Line = na
+        var line newTP6Line = na
+        var label newEntryLabel = na
+        var label newSLLabel = na
+        var label newTP1Label = na
+        var label newTP2Label = na
+        var label newTP3Label = na
+        var label newTP4Label = na
+        var label newTP5Label = na
+        var label newTP6Label = na
+        
+        // Create static lines anchored to the trade open bar and exact prices (only if showLines is enabled)
+        if showLines
+            newEntryLine = line.new(tradeOpenBar, entryPrice, tradeOpenBar + currentLineLength, entryPrice, color=color.new(color.blue, 0), width=2, style=line.style_solid, extend=extend.none)
+            newSLLine = line.new(tradeOpenBar, tradeSL, tradeOpenBar + currentLineLength, tradeSL, color=color.new(color.red, 0), width=2, style=line.style_dashed, extend=extend.none)
+            newTP1Line = line.new(tradeOpenBar, tradeTP1, tradeOpenBar + currentLineLength, tradeTP1, color=color.new(color.green, 0), width=2, style=line.style_dotted, extend=extend.none)
+            newTP2Line = line.new(tradeOpenBar, tradeTP2, tradeOpenBar + currentLineLength, tradeTP2, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+            newTP3Line = line.new(tradeOpenBar, tradeTP3, tradeOpenBar + currentLineLength, tradeTP3, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+            newTP4Line = enableTP4 ? line.new(tradeOpenBar, tradeTP4, tradeOpenBar + currentLineLength, tradeTP4, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+            newTP5Line = enableTP5 ? line.new(tradeOpenBar, tradeTP5, tradeOpenBar + currentLineLength, tradeTP5, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+            newTP6Line = enableTP6 ? line.new(tradeOpenBar, tradeTP6, tradeOpenBar + currentLineLength, tradeTP6, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+            
+            // Add lines to arrays
+            array.push(entryLines, newEntryLine)
+            array.push(slLines, newSLLine)
+            array.push(tp1Lines, newTP1Line)
+            array.push(tp2Lines, newTP2Line)
+            array.push(tp3Lines, newTP3Line)
+            array.push(tp4Lines, newTP4Line)
+            array.push(tp5Lines, newTP5Line)
+            array.push(tp6Lines, newTP6Line)
+        
+        // Create static labels anchored to the trade open bar and exact prices (only if showLines is enabled)
+        if showLines
+            newEntryLabel = label.new(tradeOpenBar + currentLineLength, entryPrice, "ENTRY: " + str.tostring(entryPrice, format.mintick), color=color.new(color.blue, 100), style=label.style_label_left, textcolor=color.blue, size=getTradeLabelSize())
+            newSLLabel = label.new(tradeOpenBar + currentLineLength, tradeSL, "SL: " + str.tostring(tradeSL, format.mintick), color=color.new(color.red, 100), style=label.style_label_left, textcolor=color.red, size=getTradeLabelSize())
+            newTP1Label = label.new(tradeOpenBar + currentLineLength, tradeTP1, "TP1: " + str.tostring(tradeTP1, format.mintick), color=color.new(color.green, 100), style=label.style_label_left, textcolor=color.green, size=getTradeLabelSize())
+            newTP2Label = label.new(tradeOpenBar + currentLineLength, tradeTP2, "TP2: " + str.tostring(tradeTP2, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize())
+            newTP3Label = label.new(tradeOpenBar + currentLineLength, tradeTP3, "TP3: " + str.tostring(tradeTP3, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize())
+            newTP4Label = enableTP4 ? label.new(tradeOpenBar + currentLineLength, tradeTP4, "TP4: " + str.tostring(tradeTP4, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+            newTP5Label = enableTP5 ? label.new(tradeOpenBar + currentLineLength, tradeTP5, "TP5: " + str.tostring(tradeTP5, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+            newTP6Label = enableTP6 ? label.new(tradeOpenBar + currentLineLength, tradeTP6, "TP6: " + str.tostring(tradeTP6, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+            
+            // Add labels to arrays
+            array.push(entryLabels, newEntryLabel)
+            array.push(slLabels, newSLLabel)
+            array.push(tp1Labels, newTP1Label)
+            array.push(tp2Labels, newTP2Label)
+            array.push(tp3Labels, newTP3Label)
+            array.push(tp4Labels, newTP4Label)
+            array.push(tp5Labels, newTP5Label)
+            array.push(tp6Labels, newTP6Label)
+    
+    // Update compatibility variables with latest trade
+    lastTradeEntry := actualEntryPrice
+    lastTradeSL := actualSL
+    lastTradeTP1 := actualTP1
+    lastTradeTP2 := actualTP2
+    lastTradeTP3 := actualTP3
+    lastTradeTP4 := actualTP4
+    lastTradeTP5 := actualTP5
+    lastTradeTP6 := actualTP6
+    lastTradeDir := -1
+    isLong := 0
+    
+    // Update active flags for compatibility
+    tradeActiveTP1 := true
+    tradeActiveTP2 := true
+    tradeActiveTP3 := true
+    tradeActiveTP4 := enableTP4
+    tradeActiveTP5 := enableTP5
+    tradeActiveTP6 := enableTP6
+
+// === DELAYED DRAWING OF TRADE LINES/LABELS ===
+// Only draw lines/labels for trades that have survived at least one bar
+if array.size(tradeActive) > 0
+    for i = 0 to array.size(tradeActive) - 1
+        if array.get(tradeActive, i)
+            tradeOpenBar = array.get(tradeCreationBars, i)
+            if bar_index > tradeOpenBar
+                // Only create lines/labels if not already created (check entryLines array size) and if showLines is enabled
+                if i >= array.size(entryLines) and showLines
+                    entryPrice = array.get(tradeEntries, i)
+                    tradeSL = array.get(tradeSLs, i)
+                    tradeTP1 = array.get(tradeTP1s, i)
+                    tradeTP2 = array.get(tradeTP2s, i)
+                    tradeTP3 = array.get(tradeTP3s, i)
+                    tradeTP4 = array.get(tradeTP4s, i)
+                    tradeTP5 = array.get(tradeTP5s, i)
+                    tradeTP6 = array.get(tradeTP6s, i)
+                    tradeOpenBar = array.get(tradeCreationBars, i)
+                    // Use stored line length for this trade (prevents label movement when setting changes)
+                    currentLineLength = i < array.size(tradeLineLengths) ? array.get(tradeLineLengths, i) : defaultLineLength
+                    // Create static lines anchored to the trade open bar and exact prices
+                    newEntryLine = line.new(tradeOpenBar, entryPrice, tradeOpenBar + currentLineLength, entryPrice, color=color.new(color.blue, 0), width=2, style=line.style_solid, extend=extend.none)
+                    newSLLine = line.new(tradeOpenBar, tradeSL, tradeOpenBar + currentLineLength, tradeSL, color=color.new(color.red, 0), width=2, style=line.style_dashed, extend=extend.none)
+                    newTP1Line = line.new(tradeOpenBar, tradeTP1, tradeOpenBar + currentLineLength, tradeTP1, color=color.new(color.green, 0), width=2, style=line.style_dotted, extend=extend.none)
+                    newTP2Line = line.new(tradeOpenBar, tradeTP2, tradeOpenBar + currentLineLength, tradeTP2, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+                    newTP3Line = line.new(tradeOpenBar, tradeTP3, tradeOpenBar + currentLineLength, tradeTP3, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+                    newTP4Line = enableTP4 ? line.new(tradeOpenBar, tradeTP4, tradeOpenBar + currentLineLength, tradeTP4, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+                    newTP5Line = enableTP5 ? line.new(tradeOpenBar, tradeTP5, tradeOpenBar + currentLineLength, tradeTP5, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+                    newTP6Line = enableTP6 ? line.new(tradeOpenBar, tradeTP6, tradeOpenBar + currentLineLength, tradeTP6, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none) : na
+                    // Add lines to arrays
+                    array.push(entryLines, newEntryLine)
+                    array.push(slLines, newSLLine)
+                    array.push(tp1Lines, newTP1Line)
+                    array.push(tp2Lines, newTP2Line)
+                    array.push(tp3Lines, newTP3Line)
+                    array.push(tp4Lines, newTP4Line)
+                    array.push(tp5Lines, newTP5Line)
+                    array.push(tp6Lines, newTP6Line)
+                    // Create static labels anchored to the trade open bar and exact prices
+                    newEntryLabel = label.new(tradeOpenBar + currentLineLength, entryPrice, "ENTRY: " + str.tostring(entryPrice, format.mintick), color=color.new(color.blue, 100), style=label.style_label_left, textcolor=color.blue, size=getTradeLabelSize())
+                    newSLLabel = label.new(tradeOpenBar + currentLineLength, tradeSL, "SL: " + str.tostring(tradeSL, format.mintick), color=color.new(color.red, 100), style=label.style_label_left, textcolor=color.red, size=getTradeLabelSize())
+                    newTP1Label = label.new(tradeOpenBar + currentLineLength, tradeTP1, "TP1: " + str.tostring(tradeTP1, format.mintick), color=color.new(color.green, 100), style=label.style_label_left, textcolor=color.green, size=getTradeLabelSize())
+                    newTP2Label = label.new(tradeOpenBar + currentLineLength, tradeTP2, "TP2: " + str.tostring(tradeTP2, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize())
+                    newTP3Label = label.new(tradeOpenBar + currentLineLength, tradeTP3, "TP3: " + str.tostring(tradeTP3, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize())
+                    newTP4Label = enableTP4 ? label.new(tradeOpenBar + currentLineLength, tradeTP4, "TP4: " + str.tostring(tradeTP4, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+                    newTP5Label = enableTP5 ? label.new(tradeOpenBar + currentLineLength, tradeTP5, "TP5: " + str.tostring(tradeTP5, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+                    newTP6Label = enableTP6 ? label.new(tradeOpenBar + currentLineLength, tradeTP6, "TP6: " + str.tostring(tradeTP6, format.mintick), color=color.new(color.lime, 100), style=label.style_label_left, textcolor=color.lime, size=getTradeLabelSize()) : na
+                    // Add labels to arrays
+                    array.push(entryLabels, newEntryLabel)
+                    array.push(slLabels, newSLLabel)
+                    array.push(tp1Labels, newTP1Label)
+                    array.push(tp2Labels, newTP2Label)
+                    array.push(tp3Labels, newTP3Label)
+                    array.push(tp4Labels, newTP4Label)
+                    array.push(tp5Labels, newTP5Label)
+                    array.push(tp6Labels, newTP6Label)
+                
+                // Update visibility of existing lines based on showLines setting
+                if i < array.size(entryLines)
+                    if showLines
+                        // Show lines with their original colors
+                        line.set_color(array.get(entryLines, i), color.new(color.blue, 0))
+                        line.set_color(array.get(slLines, i), color.new(color.red, 0))
+                        if i < array.size(tp1Lines)
+                            line.set_color(array.get(tp1Lines, i), color.new(color.green, 0))
+                        if i < array.size(tp2Lines)
+                            line.set_color(array.get(tp2Lines, i), color.new(color.lime, 0))
+                        if i < array.size(tp3Lines)
+                            line.set_color(array.get(tp3Lines, i), color.new(color.lime, 0))
+                        if i < array.size(tp4Lines) and not na(array.get(tp4Lines, i))
+                            line.set_color(array.get(tp4Lines, i), color.new(color.lime, 0))
+                        if i < array.size(tp5Lines) and not na(array.get(tp5Lines, i))
+                            line.set_color(array.get(tp5Lines, i), color.new(color.lime, 0))
+                        if i < array.size(tp6Lines) and not na(array.get(tp6Lines, i))
+                            line.set_color(array.get(tp6Lines, i), color.new(color.lime, 0))
+                    else
+                        // Hide lines by making them fully transparent
+                        line.set_color(array.get(entryLines, i), color.new(color.blue, 100))
+                        line.set_color(array.get(slLines, i), color.new(color.red, 100))
+                        if i < array.size(tp1Lines)
+                            line.set_color(array.get(tp1Lines, i), color.new(color.green, 100))
+                        if i < array.size(tp2Lines)
+                            line.set_color(array.get(tp2Lines, i), color.new(color.lime, 100))
+                        if i < array.size(tp3Lines)
+                            line.set_color(array.get(tp3Lines, i), color.new(color.lime, 100))
+                        if i < array.size(tp4Lines) and not na(array.get(tp4Lines, i))
+                            line.set_color(array.get(tp4Lines, i), color.new(color.lime, 100))
+                        if i < array.size(tp5Lines) and not na(array.get(tp5Lines, i))
+                            line.set_color(array.get(tp5Lines, i), color.new(color.lime, 100))
+                        if i < array.size(tp6Lines) and not na(array.get(tp6Lines, i))
+                            line.set_color(array.get(tp6Lines, i), color.new(color.lime, 100))
+
+// === RECREATE LINES FOR CLOSED TRADES ===
+// Recreate lines for closed trades that have labels but missing lines
+if showLines and array.size(tradeEntries) > 0
+    for i = 0 to array.size(tradeEntries) - 1
+        // Check if entry label exists but entry line is missing
+        hasEntryLabel = i < array.size(entryLabels) and not na(array.get(entryLabels, i))
+        missingEntryLine = i >= array.size(entryLines) or na(array.get(entryLines, i))
+        
+        if hasEntryLabel and missingEntryLine
+            // Get trade data from arrays
+            tradeOpenBar = array.get(tradeCreationBars, i)
+            entryPrice = array.get(tradeEntries, i)
+            tradeSL = array.get(tradeSLs, i)
+            tradeTP1 = array.get(tradeTP1s, i)
+            tradeTP2 = array.get(tradeTP2s, i)
+            tradeTP3 = array.get(tradeTP3s, i)
+            tradeTP4 = array.get(tradeTP4s, i)
+            tradeTP5 = array.get(tradeTP5s, i)
+            tradeTP6 = array.get(tradeTP6s, i)
+            
+            // Use stored line length for this trade (prevents label movement when setting changes)
+            currentLineLength = i < array.size(tradeLineLengths) ? array.get(tradeLineLengths, i) : defaultLineLength
+            
+            // Recreate entry line
+            if missingEntryLine
+                newEntryLine = line.new(tradeOpenBar, entryPrice, tradeOpenBar + currentLineLength, entryPrice, color=color.new(color.blue, 0), width=2, style=line.style_solid, extend=extend.none)
+                if i >= array.size(entryLines)
+                    array.push(entryLines, newEntryLine)
+                else
+                    array.set(entryLines, i, newEntryLine)
+            
+            // Recreate SL line
+            hasSLLabel = i < array.size(slLabels) and not na(array.get(slLabels, i))
+            missingSLLine = i >= array.size(slLines) or na(array.get(slLines, i))
+            if hasSLLabel and missingSLLine
+                newSLLine = line.new(tradeOpenBar, tradeSL, tradeOpenBar + currentLineLength, tradeSL, color=color.new(color.red, 0), width=2, style=line.style_dashed, extend=extend.none)
+                if i >= array.size(slLines)
+                    array.push(slLines, newSLLine)
+                else
+                    array.set(slLines, i, newSLLine)
+            
+            // Recreate TP1 line
+            hasTP1Label = i < array.size(tp1Labels) and not na(array.get(tp1Labels, i))
+            missingTP1Line = i >= array.size(tp1Lines) or na(array.get(tp1Lines, i))
+            if hasTP1Label and missingTP1Line
+                newTP1Line = line.new(tradeOpenBar, tradeTP1, tradeOpenBar + currentLineLength, tradeTP1, color=color.new(color.green, 0), width=2, style=line.style_dotted, extend=extend.none)
+                if i >= array.size(tp1Lines)
+                    array.push(tp1Lines, newTP1Line)
+                else
+                    array.set(tp1Lines, i, newTP1Line)
+            
+            // Recreate TP2 line
+            hasTP2Label = i < array.size(tp2Labels) and not na(array.get(tp2Labels, i))
+            missingTP2Line = i >= array.size(tp2Lines) or na(array.get(tp2Lines, i))
+            if hasTP2Label and missingTP2Line
+                newTP2Line = line.new(tradeOpenBar, tradeTP2, tradeOpenBar + currentLineLength, tradeTP2, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+                if i >= array.size(tp2Lines)
+                    array.push(tp2Lines, newTP2Line)
+                else
+                    array.set(tp2Lines, i, newTP2Line)
+            
+            // Recreate TP3 line
+            hasTP3Label = i < array.size(tp3Labels) and not na(array.get(tp3Labels, i))
+            missingTP3Line = i >= array.size(tp3Lines) or na(array.get(tp3Lines, i))
+            if hasTP3Label and missingTP3Line
+                newTP3Line = line.new(tradeOpenBar, tradeTP3, tradeOpenBar + currentLineLength, tradeTP3, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+                if i >= array.size(tp3Lines)
+                    array.push(tp3Lines, newTP3Line)
+                else
+                    array.set(tp3Lines, i, newTP3Line)
+            
+            // Recreate TP4 line (only if enabled)
+            hasTP4Label = i < array.size(tp4Labels) and not na(array.get(tp4Labels, i))
+            missingTP4Line = i >= array.size(tp4Lines) or na(array.get(tp4Lines, i))
+            if hasTP4Label and missingTP4Line and enableTP4
+                newTP4Line = line.new(tradeOpenBar, tradeTP4, tradeOpenBar + currentLineLength, tradeTP4, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+                if i >= array.size(tp4Lines)
+                    array.push(tp4Lines, newTP4Line)
+                else
+                    array.set(tp4Lines, i, newTP4Line)
+            
+            // Recreate TP5 line (only if enabled)
+            hasTP5Label = i < array.size(tp5Labels) and not na(array.get(tp5Labels, i))
+            missingTP5Line = i >= array.size(tp5Lines) or na(array.get(tp5Lines, i))
+            if hasTP5Label and missingTP5Line and enableTP5
+                newTP5Line = line.new(tradeOpenBar, tradeTP5, tradeOpenBar + currentLineLength, tradeTP5, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+                if i >= array.size(tp5Lines)
+                    array.push(tp5Lines, newTP5Line)
+                else
+                    array.set(tp5Lines, i, newTP5Line)
+            
+            // Recreate TP6 line (only if enabled)
+            hasTP6Label = i < array.size(tp6Labels) and not na(array.get(tp6Labels, i))
+            missingTP6Line = i >= array.size(tp6Lines) or na(array.get(tp6Lines, i))
+            if hasTP6Label and missingTP6Line and enableTP6
+                newTP6Line = line.new(tradeOpenBar, tradeTP6, tradeOpenBar + currentLineLength, tradeTP6, color=color.new(color.lime, 0), width=2, style=line.style_dotted, extend=extend.none)
+                if i >= array.size(tp6Lines)
+                    array.push(tp6Lines, newTP6Line)
+                else
+                    array.set(tp6Lines, i, newTP6Line)
+
+// ==================== TABLE DISPLAY ====================
+// Compact tables, always update on every bar
+var table infoTable = na
+var table infoTable2 = na
+var table notesTable = na
+
+// Function to check if price hit target
+hitTarget(price, target, isLong) =>
+    isLong ? price >= target : price <= target
+
+// Function to check if price hit stop
+hitStop(price, stop, isLong) =>
+    isLong ? price <= stop : price >= stop
+
+// Clear arrays on first bar to ensure clean start
+if barstate.isfirst
+    array.clear(winTrades)
+    array.clear(loseTrades)
+    array.clear(winTradesTP2)
+    array.clear(loseTradesTP2)
+    array.clear(winTradesTP3)
+    array.clear(loseTradesTP3)
+    array.clear(winTradesTP4)
+    array.clear(loseTradesTP4)
+    array.clear(winTradesTP5)
+    array.clear(loseTradesTP5)
+    array.clear(winTradesTP6)
+    array.clear(loseTradesTP6)
+    array.clear(tradeHistory)
+    array.clear(primaryWins)
+    array.clear(primaryLosses)
+    array.clear(primaryLogged)
+
+// Clear arrays when filter settings change to ensure accurate historical backtesting
+var bool lastUseADXFilter = false
+var bool lastUseRSIFilter = false
+var bool lastUseDivergenceFilter = false
+var bool lastUseOrderBlockFilter = false
+var bool filtersInitialized = false
+
+if filtersInitialized
+    if lastUseADXFilter != useADXFilter
+        array.clear(winTrades)
+        array.clear(loseTrades)
+        array.clear(winTradesTP2)
+        array.clear(loseTradesTP2)
+        array.clear(winTradesTP3)
+        array.clear(loseTradesTP3)
+        array.clear(winTradesTP4)
+        array.clear(loseTradesTP4)
+        array.clear(winTradesTP5)
+        array.clear(loseTradesTP5)
+        array.clear(winTradesTP6)
+        array.clear(loseTradesTP6)
+        array.clear(tradeHistory)
+        array.clear(primaryWins)
+        array.clear(primaryLosses)
+        array.clear(primaryLogged)
+        consecutiveLosses := 0
+
+    if lastUseRSIFilter != useRSIFilter
+        array.clear(winTrades)
+        array.clear(loseTrades)
+        array.clear(winTradesTP2)
+        array.clear(loseTradesTP2)
+        array.clear(winTradesTP3)
+        array.clear(loseTradesTP3)
+        array.clear(winTradesTP4)
+        array.clear(loseTradesTP4)
+        array.clear(winTradesTP5)
+        array.clear(loseTradesTP5)
+        array.clear(winTradesTP6)
+        array.clear(loseTradesTP6)
+        array.clear(tradeHistory)
+        array.clear(primaryWins)
+        array.clear(primaryLosses)
+        array.clear(primaryLogged)
+        consecutiveLosses := 0
+
+    if lastUseDivergenceFilter != useDivergenceFilter
+        array.clear(winTrades)
+        array.clear(loseTrades)
+        array.clear(winTradesTP2)
+        array.clear(loseTradesTP2)
+        array.clear(winTradesTP3)
+        array.clear(loseTradesTP3)
+        array.clear(winTradesTP4)
+        array.clear(loseTradesTP4)
+        array.clear(winTradesTP5)
+        array.clear(loseTradesTP5)
+        array.clear(winTradesTP6)
+        array.clear(loseTradesTP6)
+        array.clear(tradeHistory)
+        array.clear(primaryWins)
+        array.clear(primaryLosses)
+        array.clear(primaryLogged)
+        consecutiveLosses := 0
+
+    if lastUseOrderBlockFilter != useOrderBlockFilter
+        array.clear(winTrades)
+        array.clear(loseTrades)
+        array.clear(winTradesTP2)
+        array.clear(loseTradesTP2)
+        array.clear(winTradesTP3)
+        array.clear(loseTradesTP3)
+        array.clear(winTradesTP4)
+        array.clear(loseTradesTP4)
+        array.clear(winTradesTP5)
+        array.clear(loseTradesTP5)
+        array.clear(winTradesTP6)
+        array.clear(loseTradesTP6)
+        array.clear(tradeHistory)
+        array.clear(primaryWins)
+        array.clear(primaryLosses)
+        array.clear(primaryLogged)
+        consecutiveLosses := 0
+
+    // Update last filter states
+    lastUseADXFilter := useADXFilter
+    lastUseRSIFilter := useRSIFilter
+    lastUseDivergenceFilter := useDivergenceFilter
+    lastUseOrderBlockFilter := useOrderBlockFilter
+    filtersInitialized := true
+
+// ==================== MFI CALCULATION ====================
+// mfi = ta.mfi(hlc3, 14) // No longer needed here
+
+// ==================== DIVERGENCE DETECTION (MFI) ====================
+pivotLenMFI = 2
+priceLowMFI = ta.pivotlow(low, pivotLenMFI, pivotLenMFI)
+priceHighMFI = ta.pivothigh(high, pivotLenMFI, pivotLenMFI)
+mfiLow = ta.pivotlow(mfi, pivotLenMFI, pivotLenMFI)
+mfiHigh = ta.pivothigh(mfi, pivotLenMFI, pivotLenMFI)
+
+// Move valuewhen calls outside if blocks
+prevPriceLowMFI = ta.valuewhen(not na(priceLowMFI), low[pivotLenMFI], 1)
+prevMfiLow = ta.valuewhen(not na(mfiLow), mfi[pivotLenMFI], 1)
+prevPriceHighMFI = ta.valuewhen(not na(priceHighMFI), high[pivotLenMFI], 1)
+prevMfiHigh = ta.valuewhen(not na(mfiHigh), mfi[pivotLenMFI], 1)
+
+// Debug information for MFI pivots
+if showDivergenceDebug and not na(priceLowMFI)
+    label.new(bar_index - pivotLenMFI, low[pivotLenMFI], "MPL", color=color.new(color.blue, 80), style=label.style_label_up, textcolor=color.blue, size=getDebugLabelSize())
+if showDivergenceDebug and not na(priceHighMFI)
+    label.new(bar_index - pivotLenMFI, high[pivotLenMFI], "MPH", color=color.new(color.blue, 80), style=label.style_label_down, textcolor=color.blue, size=getDebugLabelSize())
+if showDivergenceDebug and not na(mfiLow)
+    label.new(bar_index - pivotLenMFI, low[pivotLenMFI] - ta.atr(14) * 0.3, "ML", color=color.new(color.purple, 80), style=label.style_label_up, textcolor=color.purple, size=getDebugLabelSize())
+if showDivergenceDebug and not na(mfiHigh)
+    label.new(bar_index - pivotLenMFI, high[pivotLenMFI] + ta.atr(14) * 0.3, "MH", color=color.new(color.purple, 80), style=label.style_label_down, textcolor=color.purple, size=getDebugLabelSize())
+
+var bullDivMFIx = false
+if not na(priceLowMFI) and not na(mfiLow)
+    priceDiff = math.abs(low[pivotLenMFI] - prevPriceLowMFI)
+    mfiDiff = math.abs(mfi[pivotLenMFI] - prevMfiLow)
+    bullDivMFIx := (low[pivotLenMFI] <= prevPriceLowMFI) and (mfi[pivotLenMFI] >= prevMfiLow) and (mfiDiff >= mfiDivThreshold) and (priceDiff >= priceDivThreshold)
+
+var bearDivMFIx = false
+if not na(priceHighMFI) and not na(mfiHigh)
+    priceDiff = math.abs(high[pivotLenMFI] - prevPriceHighMFI)
+    mfiDiff = math.abs(mfi[pivotLenMFI] - prevMfiHigh)
+    bearDivMFIx := (high[pivotLenMFI] >= prevPriceHighMFI) and (mfi[pivotLenMFI] <= prevMfiHigh) and (mfiDiff >= mfiDivThreshold) and (priceDiff >= priceDivThreshold)
+
+showBullDivMFI = bullDivMFIx and (na(lastBullDivMFIBar) or bar_index - lastBullDivMFIBar > minBarsBetween)
+if showBullDivMFI
+    lastBullDivMFIBar := bar_index
+
+showBearDivMFI = bearDivMFIx and (na(lastBearDivMFIBar) or bar_index - lastBearDivMFIBar > minBarsBetween)
+if showBearDivMFI
+    lastBearDivMFIBar := bar_index
+
+// Plot MFI divergence signals only if showMFIDiv is true
+// plotshape(showMFIDiv and showBullDivMFI, style=shape.triangleup, location=location.belowbar, color=color.new(color.aqua, 0), size=size.normal, title="Bullish MFI Divergence")
+// plotshape(showMFIDiv and showBearDivMFI, style=shape.triangledown, location=location.abovebar, color=color.new(color.fuchsia, 0), size=size.normal, title="Bearish MFI Divergence")
+
+// Debug labels for MFI divergence
+// if showDivergenceDebug and showBullDivMFI
+//     label.new(bar_index, low - ta.atr(14) * 1.0, "MFI BULL DIV", color=color.new(color.aqua, 80), style=label.style_label_up, textcolor=color.aqua, size=size.tiny)
+// if showDivergenceDebug and showBearDivMFI
+//     label.new(bar_index, high + ta.atr(14) * 1.0, "MFI BEAR DIV", color=color.new(color.fuchsia, 80), style=label.style_label_down, textcolor=color.fuchsia, size=size.tiny)
+
+// === Liquidity Zone Detection ===
+var line[] buyLiqLines = array.new_line()
+var label[] buyLiqLabels = array.new_label()
+var line[] sellLiqLines = array.new_line()
+var label[] sellLiqLabels = array.new_label()
+
+liqSwingHigh = ta.pivothigh(high, liqLookback, liqLookback)
+liqSwingLow = ta.pivotlow(low, liqLookback, liqLookback)
+
+if not na(liqSwingHigh)
+    liqPrice = high[liqLookback]
+    buyLabel = label.new(bar_index - liqLookback, liqPrice + syminfo.mintick * 10, "Buy Side Liquidity\n" + str.tostring(liqPrice, format.mintick), color=color.new(color.green, 80), style=label.style_label_down, textcolor=color.green, size=getLiquidityLabelSize())
+    buyLine = line.new(bar_index - liqLookback, liqPrice, bar_index - liqLookback + lineLengthLiq, liqPrice, color=color.new(color.green, 60), width=2, style=line.style_solid)
+    array.push(buyLiqLabels, buyLabel)
+    array.push(buyLiqLines, buyLine)
+    if array.size(buyLiqLines) > maxLiqZones
+        line.delete(array.shift(buyLiqLines))
+        label.delete(array.shift(buyLiqLabels))
+
+if not na(liqSwingLow)
+    liqPrice = low[liqLookback]
+    sellLabel = label.new(bar_index - liqLookback, liqPrice - syminfo.mintick * 10, "Sell Side Liquidity\n" + str.tostring(liqPrice, format.mintick), color=color.new(color.red, 80), style=label.style_label_up, textcolor=color.red, size=getLiquidityLabelSize())
+    sellLine = line.new(bar_index - liqLookback, liqPrice, bar_index - liqLookback + lineLengthLiq, liqPrice, color=color.new(color.red, 60), width=2, style=line.style_solid)
+    array.push(sellLiqLabels, sellLabel)
+    array.push(sellLiqLines, sellLine)
+    if array.size(sellLiqLines) > maxLiqZones
+        line.delete(array.shift(sellLiqLines))
+        label.delete(array.shift(sellLiqLabels))
+
+// === MULTIPLE TRADES MANAGEMENT ===
+// Loop through all active trades and manage them
+if array.size(tradeActive) > 0
+    for i = array.size(tradeActive) - 1 to 0
+        if array.get(tradeActive, i)
+            tradeEntry = array.get(tradeEntries, i)
+            tradeSL = array.get(tradeSLs, i)
+            tradeTP1 = array.get(tradeTP1s, i)
+            tradeTP2 = array.get(tradeTP2s, i)
+            tradeTP3 = array.get(tradeTP3s, i)
+            tradeTP4 = array.get(tradeTP4s, i)
+            tradeTP5 = array.get(tradeTP5s, i)
+            tradeTP6 = array.get(tradeTP6s, i)
+            tradeDir = array.get(tradeDirs, i)
+            
+            // Declare local variables for trade exit logic
+            bool shouldExitTrade = false
+            float exitPrice = na
+            bool wasStopHit = false
+            
+            // Skip TP/SL checks on the bar the trade was created to avoid instant stop-outs
+            tradeOpenBar = array.get(tradeCreationBars, i)
+
+            if bar_index > tradeOpenBar
+
+                // STEP 1: Track TP hits for this specific trade
+                if tradeDir == 1  // Long trade
+                    if not array.get(tp1Hits, i) and high >= tradeTP1
+                        array.set(tp1Hits, i, true)
+                        if array.size(winTrades) == 0 or array.size(winTrades) < array.size(tradeEntries)
+                            array.push(winTrades, math.abs(tradeTP1 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP1 hit
+                        addWinLossLabel(bar_index, tradeTP1, "W", atr)
+                        // Primary outcome logging
+                        if not array.get(primaryLogged, i)
+                            array.push(primaryWins, math.abs(tradeTP1 - tradeEntry))
+                            array.set(primaryLogged, i, true)
+                    if not array.get(tp2Hits, i) and high >= tradeTP2
+                        array.set(tp2Hits, i, true)
+                        if array.size(winTradesTP2) == 0 or array.size(winTradesTP2) < array.size(tradeEntries)
+                            array.push(winTradesTP2, math.abs(tradeTP2 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP2 hit
+                        addWinLossLabel(bar_index, tradeTP2, "W", atr)
+                    if not array.get(tp3Hits, i) and high >= tradeTP3
+                        array.set(tp3Hits, i, true)
+                        if array.size(winTradesTP3) == 0 or array.size(winTradesTP3) < array.size(tradeEntries)
+                            array.push(winTradesTP3, math.abs(tradeTP3 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP3 hit
+                        addWinLossLabel(bar_index, tradeTP3, "W", atr)
+                    if enableTP4 and not array.get(tp4Hits, i) and high >= tradeTP4
+                        array.set(tp4Hits, i, true)
+                        if array.size(winTradesTP4) == 0 or array.size(winTradesTP4) < array.size(tradeEntries)
+                            array.push(winTradesTP4, math.abs(tradeTP4 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP4 hit
+                        addWinLossLabel(bar_index, tradeTP4, "W", atr)
+                    if enableTP5 and not array.get(tp5Hits, i) and high >= tradeTP5
+                        array.set(tp5Hits, i, true)
+                        if array.size(winTradesTP5) == 0 or array.size(winTradesTP5) < array.size(tradeEntries)
+                            array.push(winTradesTP5, math.abs(tradeTP5 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP5 hit
+                        addWinLossLabel(bar_index, tradeTP5, "W", atr)
+                    if enableTP6 and not array.get(tp6Hits, i) and high >= tradeTP6
+                        array.set(tp6Hits, i, true)
+                        if array.size(winTradesTP6) == 0 or array.size(winTradesTP6) < array.size(tradeEntries)
+                            array.push(winTradesTP6, math.abs(tradeTP6 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP6 hit
+                        addWinLossLabel(bar_index, tradeTP6, "W", atr)
+                    // Stop Loss Hit
+                    if low <= tradeSL
+                        shouldExitTrade := true
+                        exitPrice := tradeSL
+                        wasStopHit := true
+                    else if enableTP6 and array.get(tp6Hits, i)
+                        shouldExitTrade := true
+                        exitPrice := tradeTP6
+                    else if enableTP5 and array.get(tp5Hits, i) and not enableTP6
+                        shouldExitTrade := true
+                        exitPrice := tradeTP5
+                    else if enableTP4 and array.get(tp4Hits, i) and not enableTP5 and not enableTP6
+                        shouldExitTrade := true
+                        exitPrice := tradeTP4
+                    else if array.get(tp3Hits, i) and not enableTP4 and not enableTP5 and not enableTP6
+                        shouldExitTrade := true
+                        exitPrice := tradeTP3
+                else if tradeDir == -1  // Short trade
+                    if not array.get(tp1Hits, i) and low <= tradeTP1
+                        array.set(tp1Hits, i, true)
+                        if array.size(winTrades) == 0 or array.size(winTrades) < array.size(tradeEntries)
+                            array.push(winTrades, math.abs(tradeTP1 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP1 hit (short)
+                        addWinLossLabel(bar_index, tradeTP1, "W", atr)
+                        // Primary outcome logging (short)
+                        if not array.get(primaryLogged, i)
+                            array.push(primaryWins, math.abs(tradeTP1 - tradeEntry))
+                            array.set(primaryLogged, i, true)
+                    if not array.get(tp2Hits, i) and low <= tradeTP2
+                        array.set(tp2Hits, i, true)
+                        if array.size(winTradesTP2) == 0 or array.size(winTradesTP2) < array.size(tradeEntries)
+                            array.push(winTradesTP2, math.abs(tradeTP2 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP2 hit (short)
+                        addWinLossLabel(bar_index, tradeTP2, "W", atr)
+                    if not array.get(tp3Hits, i) and low <= tradeTP3
+                        array.set(tp3Hits, i, true)
+                        if array.size(winTradesTP3) == 0 or array.size(winTradesTP3) < array.size(tradeEntries)
+                            array.push(winTradesTP3, math.abs(tradeTP3 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP3 hit (short)
+                        addWinLossLabel(bar_index, tradeTP3, "W", atr)
+                    if enableTP4 and not array.get(tp4Hits, i) and low <= tradeTP4
+                        array.set(tp4Hits, i, true)
+                        if array.size(winTradesTP4) == 0 or array.size(winTradesTP4) < array.size(tradeEntries)
+                            array.push(winTradesTP4, math.abs(tradeTP4 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP4 hit (short)
+                        addWinLossLabel(bar_index, tradeTP4, "W", atr)
+                    if enableTP5 and not array.get(tp5Hits, i) and low <= tradeTP5
+                        array.set(tp5Hits, i, true)
+                        if array.size(winTradesTP5) == 0 or array.size(winTradesTP5) < array.size(tradeEntries)
+                            array.push(winTradesTP5, math.abs(tradeTP5 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP5 hit (short)
+                        addWinLossLabel(bar_index, tradeTP5, "W", atr)
+                    if enableTP6 and not array.get(tp6Hits, i) and low <= tradeTP6
+                        array.set(tp6Hits, i, true)
+                        if array.size(winTradesTP6) == 0 or array.size(winTradesTP6) < array.size(tradeEntries)
+                            array.push(winTradesTP6, math.abs(tradeTP6 - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        // Print W label at TP6 hit (short)
+                        addWinLossLabel(bar_index, tradeTP6, "W", atr)
+                    // Stop Loss Hit
+                    if high >= tradeSL
+                        shouldExitTrade := true
+                        exitPrice := tradeSL
+                        wasStopHit := true
+                    else if enableTP6 and array.get(tp6Hits, i)
+                        shouldExitTrade := true
+                        exitPrice := tradeTP6
+                    else if enableTP5 and array.get(tp5Hits, i) and not enableTP6
+                        shouldExitTrade := true
+                        exitPrice := tradeTP5
+                    else if enableTP4 and array.get(tp4Hits, i) and not enableTP5 and not enableTP6
+                        shouldExitTrade := true
+                        exitPrice := tradeTP4
+                    else if array.get(tp3Hits, i) and not enableTP4 and not enableTP5 and not enableTP6
+                        shouldExitTrade := true
+                        exitPrice := tradeTP3
+                
+                // STEP 3: Close this specific trade if exit condition met
+                if shouldExitTrade
+                    // Only log a loss if the trade is being closed due to stop loss (wasStopHit is true)
+                    if wasStopHit
+                        if not array.get(tp1Hits, i) or not array.get(tp2Hits, i) or not array.get(tp3Hits, i) or (enableTP4 and not array.get(tp4Hits, i)) or (enableTP5 and not array.get(tp5Hits, i)) or (enableTP6 and not array.get(tp6Hits, i))
+                            array.push(loseTrades, math.abs(tradeEntry - tradeSL))
+                            array.push(tradeHistory, "L")
+                            consecutiveLosses := consecutiveLosses + 1
+                            addWinLossLabel(bar_index, exitPrice, "L", atr)
+                        // Primary outcome logging for loss (SL)
+                        if not array.get(primaryLogged, i)
+                            array.push(primaryLosses, math.abs(tradeEntry - tradeSL))
+                            array.set(primaryLogged, i, true)
+                    else
+                        // If this win hasn't been recorded yet (e.g., trade opened & closed same bar)
+                        if array.size(winTrades) < array.size(tradeEntries)
+                            array.push(winTrades, math.abs(exitPrice - tradeEntry))
+                            array.push(tradeHistory, "W")
+                            consecutiveLosses := 0
+                        addWinLossLabel(bar_index, exitPrice, "W", atr)
+                    
+                    // Mark this trade as closed
+                    array.set(tradeActive, i, false)
+                    
+                    // Set waiting for signal reset when trade closes
+                    if tradeDir == 1
+                        waitingForLongReset := true
+                    else
+                        waitingForShortReset := true
+                    
+                    // Clean up visual elements for this closed trade (delete immediately)
+                    // Only delete if trade is confirmed inactive AND line exists
+                    if not array.get(tradeActive, i) and i < array.size(entryLines)
+                        line.delete(array.get(entryLines, i))
+                        line.delete(array.get(slLines, i))
+                        line.delete(array.get(tp1Lines, i))
+                        line.delete(array.get(tp2Lines, i))
+                        line.delete(array.get(tp3Lines, i))
+                        if i < array.size(tp4Lines) and not na(array.get(tp4Lines, i))
+                            line.delete(array.get(tp4Lines, i))
+                        if i < array.size(tp5Lines) and not na(array.get(tp5Lines, i))
+                            line.delete(array.get(tp5Lines, i))
+                        if i < array.size(tp6Lines) and not na(array.get(tp6Lines, i))
+                            line.delete(array.get(tp6Lines, i))
+                        label.delete(array.get(entryLabels, i))
+                        label.delete(array.get(slLabels, i))
+                        label.delete(array.get(tp1Labels, i))
+                        label.delete(array.get(tp2Labels, i))
+                        label.delete(array.get(tp3Labels, i))
+                        if i < array.size(tp4Labels) and not na(array.get(tp4Labels, i))
+                            label.delete(array.get(tp4Labels, i))
+                        if i < array.size(tp5Labels) and not na(array.get(tp5Labels, i))
+                            label.delete(array.get(tp5Labels, i))
+                        if i < array.size(tp6Labels) and not na(array.get(tp6Labels, i))
+                            label.delete(array.get(tp6Labels, i))
+
+// Update compatibility variables with any active trade (for table display)
+hasActiveTrades = false
+if array.size(tradeActive) > 0
+    for i = 0 to array.size(tradeActive) - 1
+        if array.get(tradeActive, i)
+            hasActiveTrades := true
+            // Update compatibility vars with most recent active trade
+            lastTradeEntry := array.get(tradeEntries, i)
+            lastTradeSL := array.get(tradeSLs, i)
+            lastTradeTP1 := array.get(tradeTP1s, i)
+            lastTradeTP2 := array.get(tradeTP2s, i)
+            lastTradeTP3 := array.get(tradeTP3s, i)
+            lastTradeTP4 := array.get(tradeTP4s, i)
+            lastTradeTP5 := array.get(tradeTP5s, i)
+            lastTradeTP6 := array.get(tradeTP6s, i)
+            lastTradeDir := array.get(tradeDirs, i)
+            isLong := array.get(tradeDirs, i) == 1 ? 1 : 0
+            tp1Hit := array.get(tp1Hits, i)
+            tp2Hit := array.get(tp2Hits, i)
+            tp3Hit := array.get(tp3Hits, i)
+            tp4Hit := array.get(tp4Hits, i)
+            tp5Hit := array.get(tp5Hits, i)
+            tp6Hit := array.get(tp6Hits, i)
+            break
+
+tradeActiveTP1 := hasActiveTrades
+tradeActiveTP2 := hasActiveTrades
+tradeActiveTP3 := hasActiveTrades
+tradeActiveTP4 := hasActiveTrades
+tradeActiveTP5 := hasActiveTrades
+tradeActiveTP6 := hasActiveTrades
+
+// ==================== TABLE DISPLAY ====================
+// Update table with current or last signal info
+if barstate.islast
+    // Create tables only if their respective switches are enabled
+    if showPerformanceTable and strategyMode != "Disabled"
+        if na(infoTable2)
+            infoTable2 := table.new(position.top_right, 3, 5, bgcolor=color.new(color.black, 70), frame_color=color.new(color.white, 50), frame_width=1)
+    else
+        if not na(infoTable2)
+            table.delete(infoTable2)
+            infoTable2 := na
+    
+    if showSignalOverviewTable and strategyMode != "Disabled"
+        if na(notesTable)
+            notesTable := table.new(position.middle_right, 2, 2, bgcolor=color.new(color.black, 70), frame_color=color.new(color.white, 50), frame_width=1)
+    else
+        if not na(notesTable)
+            table.delete(notesTable)
+            notesTable := na
+    
+    // Use last potential signal's data if available
+    shouldDisplayInfo = not na(lastPotentialEntry)
+
+    if shouldDisplayInfo
+        // Use active trade data if available, otherwise use potential signal data
+        string directionText = ""
+        float entryPrice = na
+        float stopLoss = na
+        float takeProfit1 = na
+        float takeProfit2 = na
+        float takeProfit3 = na
+        float takeProfit4 = na
+        float takeProfit5 = na
+        float takeProfit6 = na
+        if hasActiveTrades
+            entryPrice = lastTradeEntry
+            stopLoss = lastTradeSL
+            takeProfit1 = lastTradeTP1
+            takeProfit2 = lastTradeTP2
+            takeProfit3 = lastTradeTP3
+            takeProfit4 = lastTradeTP4
+            takeProfit5 = lastTradeTP5
+            takeProfit6 = lastTradeTP6
+            directionText := lastTradeDir == 1 ? "LONG" : lastTradeDir == -1 ? "SHORT" : "NONE"
+        else
+            entryPrice = lastPotentialEntry
+            stopLoss = lastPotentialSL
+            takeProfit1 = lastPotentialTP1
+            takeProfit2 = lastPotentialTP2
+            takeProfit3 = lastPotentialTP3
+            takeProfit4 = lastPotentialTP4
+            takeProfit5 = lastPotentialTP5
+            takeProfit6 = lastPotentialTP6
+            directionText := lastPotentialDir == 1 ? "LONG" : lastPotentialDir == -1 ? "SHORT" : "NONE"
+        
+
+        // New compact infoTable2: 1 row of headers, 1 row of stats, 1 row for TOTAL
+        if showPerformanceTable and not na(infoTable2)
+            winCount = array.size(primaryWins)      // TP1 wins only
+            loseCount = array.size(primaryLosses)   // SL losses only
+            totalTrades = winCount + loseCount
+            winRate = totalTrades > 0 ? (winCount * 100.0 / totalTrades) : na
+            winCountTP2 = array.size(winTradesTP2)
+            loseCountTP2 = math.max(0, totalTrades - winCountTP2)
+            winRateTP2 = (winCountTP2 + loseCountTP2) > 0 ? (winCountTP2 * 100.0 / (winCountTP2 + loseCountTP2)) : na
+            winCountTP3 = array.size(winTradesTP3)
+            loseCountTP3 = math.max(0, totalTrades - winCountTP3)
+            winRateTP3 = (winCountTP3 + loseCountTP3) > 0 ? (winCountTP3 * 100.0 / (winCountTP3 + loseCountTP3)) : na
+            winCountTP4 = array.size(winTradesTP4)
+            loseCountTP4 = math.max(0, totalTrades - winCountTP4)
+            winRateTP4 = (winCountTP4 + loseCountTP4) > 0 ? (winCountTP4 * 100.0 / (winCountTP4 + loseCountTP4)) : na
+            winCountTP5 = array.size(winTradesTP5)
+            loseCountTP5 = math.max(0, totalTrades - winCountTP5)
+            winRateTP5 = (winCountTP5 + loseCountTP5) > 0 ? (winCountTP5 * 100.0 / (winCountTP5 + loseCountTP5)) : na
+            winCountTP6 = array.size(winTradesTP6)
+            loseCountTP6 = math.max(0, totalTrades - winCountTP6)
+            winRateTP6 = (winCountTP6 + loseCountTP6) > 0 ? (winCountTP6 * 100.0 / (winCountTP6 + loseCountTP6)) : na
+            // Primary outcome (one-per-trade) stats
+            primaryWinCount = array.size(primaryWins)
+            primaryLoseCount = array.size(primaryLosses)
+            primaryTotal = primaryWinCount + primaryLoseCount
+            table.cell(infoTable2, 0, 0, "TP1 (1:2)", bgcolor=color.new(color.green, 70), text_color=color.white)
+            table.cell(infoTable2, 1, 0, "TP2 (1:4)", bgcolor=color.new(color.green, 70), text_color=color.white)
+            table.cell(infoTable2, 2, 0, "TP3 (1:6)", bgcolor=color.new(color.green, 70), text_color=color.white)
+            table.cell(infoTable2, 0, 1, "W " + str.tostring(winCount) + " | L " + str.tostring(loseCount) + " | " + (na(winRate) ? "-" : str.tostring(winRate, "#.##") + "%"), bgcolor=color.new(color.green, 70), text_color=color.white)
+            table.cell(infoTable2, 1, 1, "W " + str.tostring(winCountTP2) + " | L " + str.tostring(loseCountTP2) + " | " + (na(winRateTP2) ? "-" : str.tostring(winRateTP2, "#.##") + "%"), bgcolor=color.new(color.green, 70), text_color=color.white)
+            table.cell(infoTable2, 2, 1, "W " + str.tostring(winCountTP3) + " | L " + str.tostring(loseCountTP3) + " | " + (na(winRateTP3) ? "-" : str.tostring(winRateTP3, "#.##") + "%"), bgcolor=color.new(color.green, 70), text_color=color.white)
+            table.cell(infoTable2, 0, 2, "TP4 (1:8)", bgcolor=enableTP4 ? color.new(color.green, 70) : color.new(color.green, 100), text_color=color.white)
+            table.cell(infoTable2, 1, 2, "TP5 (1:10)", bgcolor=enableTP5 ? color.new(color.green, 70) : color.new(color.green, 100), text_color=color.white)
+            table.cell(infoTable2, 2, 2, "TP6 (1:12)", bgcolor=enableTP6 ? color.new(color.green, 70) : color.new(color.green, 100), text_color=color.white)
+            table.cell(infoTable2, 0, 3, "W " + str.tostring(winCountTP4) + " | L " + str.tostring(loseCountTP4) + " | " + (na(winRateTP4) ? "-" : str.tostring(winRateTP4, "#.##") + "%"), bgcolor=enableTP4 ? color.new(color.green, 70) : color.new(color.green, 100), text_color=color.white)
+            table.cell(infoTable2, 1, 3, "W " + str.tostring(winCountTP5) + " | L " + str.tostring(loseCountTP5) + " | " + (na(winRateTP5) ? "-" : str.tostring(winRateTP5, "#.##") + "%"), bgcolor=enableTP5 ? color.new(color.green, 70) : color.new(color.green, 100), text_color=color.white)
+            table.cell(infoTable2, 2, 3, "W " + str.tostring(winCountTP6) + " | L " + str.tostring(loseCountTP6) + " | " + (na(winRateTP6) ? "-" : str.tostring(winRateTP6, "#.##") + "%"), bgcolor=enableTP6 ? color.new(color.green, 70) : color.new(color.green, 100), text_color=color.white)
+            table.cell(infoTable2, 0, 4, "", bgcolor=color.new(color.black, 100), text_color=color.white)
+            table.cell(infoTable2, 1, 4, "TOTAL", bgcolor=color.new(color.purple, 70), text_color=color.white)
+            table.cell(infoTable2, 2, 4, str.tostring(primaryTotal), bgcolor=color.new(color.purple, 70), text_color=color.white)
+
+        // Notes table
+        if showSignalOverviewTable and strategyMode != "Disabled" and not na(notesTable)
+            table.cell(notesTable, 0, 0, "Signal Overview", bgcolor=color.new(color.blue, 70), text_color=color.white)
+            table.cell(notesTable, 0, 1, lastPotentialNote, bgcolor=color.new(color.blue, 90), text_color=color.white)
+    else
+        // Clear tables when no signal has ever occurred
+        if showPerformanceTable and not na(infoTable2)
+            for col = 0 to 2
+                for row = 0 to 4
+                    table.cell(infoTable2, col, row, "-", bgcolor=color.new(color.gray, 70), text_color=color.white)
+        if showSignalOverviewTable and strategyMode != "Disabled" and not na(notesTable)
+            table.cell(notesTable, 0, 0, "Signal Overview", bgcolor=color.new(color.blue, 70), text_color=color.white)
+            table.cell(notesTable, 0, 1, "-", bgcolor=color.new(color.gray, 70), text_color=color.white)
+
+// === Risk Management Table ===
+var table riskTable = na
+if barstate.islast
+    if showRiskManagementTable and strategyMode != "Disabled"
+        if na(riskTable)
+            // Place at the bottom right with 2 columns
+            riskTable := table.new(position.bottom_right, 2, 3, bgcolor=color.new(color.black, 80), frame_color=color.new(color.white, 50), frame_width=1)
+    else
+        if not na(riskTable)
+            table.delete(riskTable)
+            riskTable := na
+    
+    if showRiskManagementTable and strategyMode != "Disabled" and not na(riskTable)
+        // Calculate win rate
+        winCount = array.size(primaryWins)      // TP1 wins
+        loseCount = array.size(primaryLosses)   // SL losses
+        totalTrades = winCount + loseCount
+        winRate = totalTrades > 0 ? (winCount * 100.0 / totalTrades) : 0.0
+        
+        // Row 0: Direction and Losses
+        dirIcon = isLong == 1 ? "⬆️ LONG" : isLong == 0 ? "⬇️ SHORT" : "-"
+        dirText = "Dir: " + dirIcon + "    Losses: " + str.tostring(consecutiveLosses)
+        rowColorDir = consecutiveLosses >= 3 ? color.red : color.new(color.black, 70)
+        table.cell(riskTable, 0, 0, dirText, bgcolor=rowColorDir, text_color=color.white)
+        table.cell(riskTable, 1, 0, "", bgcolor=rowColorDir, text_color=color.white)
+        
+        // Row 1: Win Rate
+        winText = "Win Rate: " + str.tostring(winRate, "#.##") + "% (" + str.tostring(winCount) + "/" + str.tostring(totalTrades) + ")"
+        rowColorWin = winRate >= 60 ? color.green : winRate >= 50 ? color.orange : color.red
+        table.cell(riskTable, 0, 1, winText, bgcolor=rowColorWin, text_color=color.white)
+        table.cell(riskTable, 1, 1, "", bgcolor=rowColorWin, text_color=color.white)
+        
+        // Row 2: Last 20 Trades
+        historySize = array.size(tradeHistory)
+        lastTradesStr = "Last (20 trades): "
+        for i = 0 to 18
+            idx = historySize - 20 + i
+            if idx >= 0 and idx < historySize
+                lastTradesStr += array.get(tradeHistory, idx) + " "
+            else
+                lastTradesStr += "- "
+        table.cell(riskTable, 0, 2, lastTradesStr, bgcolor=color.new(color.black, 70), text_color=color.white)
+
+        // Last trade in separate cell with color
+        if historySize > 0
+            lastTrade = array.get(tradeHistory, historySize - 1)
+            lastTradeColor = lastTrade == "W" ? color.green : color.red
+            table.cell(riskTable, 1, 2, lastTrade, bgcolor=color.new(color.black, 70), text_color=lastTradeColor)
+        else
+            table.cell(riskTable, 1, 2, "", bgcolor=color.new(color.black, 70), text_color=color.white)
+
+// ==================== ALERTS ====================
+// SignalRelay: JSON webhooks use alert() at the END of this file (Any alert() function call).
+alertcondition(finalLongCondition, "LONG ENTRY (label only)", "Long Entry Signal")
+alertcondition(finalShortCondition, "SHORT ENTRY (label only)", "Short Entry Signal")
+
+// ==================== TREND-BASED FIBONACCI EXTENSION ====================
+// Function to get line style for Fibonacci lines
+get_line_style(style_str) =>
+    switch style_str
+        'Solid' => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+        => line.style_solid
+
+// === Trend-Based Fibonacci Extension (3-point) ===
+// Track last three pivots for true trend-based extension
+var float fibP1 = na
+var float fibP2 = na
+var float fibP3 = na
+var int fibP1Bar = na
+var int fibP2Bar = na
+var int fibP3Bar = na
+var line fibLine1 = na
+var line fibLine2 = na
+var line[] fibExtLines = array.new_line()
+var label[] fibExtLabels = array.new_label()
+var line[] fibRetLines = array.new_line()
+var label[] fibRetLabels = array.new_label()
+var box[] historicalGoldenZones = array.new_box()
+var float[] goldenZoneTops = array.new_float()
+var float[] goldenZoneBottoms = array.new_float()
+var int[] goldenZoneStartBars = array.new_int()
+var int[] goldenZoneEndBars = array.new_int()
+var int lastStoredP3Bar = na  // Track when we last stored a golden zone to avoid duplicates
+var box fib1618Ext = na
+var box fib100Ext = na
+var box fib261Ext = na
+var box fibNeg027Ext = na
+var box fibNeg0618Ext = na
+var box fibNeg10Ext = na
+var box fibNeg1618Ext = na
+var box fib4236Ext = na
+var box fib5236Ext = na
+var box fib6854Ext = na
+var box fib7854Ext = na
+var box fib9472Ext = na
+var box fib11090Ext = na
+var box fib13708Ext = na
+var box fib16326Ext = na
+var box fib18944Ext = na
+var box fib21562Ext = na
+var box fib24180Ext = na
+
+// Detect swing highs and lows for Fibonacci extension
+pivotHigh = ta.pivothigh(high, fibLookback, fibLookback)
+pivotLow = ta.pivotlow(low, fibLookback, fibLookback)
+
+// Detect new pivots and update points - simplified without complex filters
+if not na(pivotHigh)
+    // Shift points for new high
+    fibP1 := fibP2
+    fibP1Bar := fibP2Bar
+    fibP2 := fibP3
+    fibP2Bar := fibP3Bar
+    fibP3 := high[fibLookback]
+    fibP3Bar := bar_index - fibLookback
+
+if not na(pivotLow)
+    // Shift points for new low
+    fibP1 := fibP2
+    fibP1Bar := fibP2Bar
+    fibP2 := fibP3
+    fibP2Bar := fibP3Bar
+    fibP3 := low[fibLookback]
+    fibP3Bar := bar_index - fibLookback
+
+// Draw Fibonacci levels if we have three points - simplified
+if showFib and not na(fibP1) and not na(fibP2) and not na(fibP3)
+    // Delete previous lines
+    if not na(fibLine1)
+        line.delete(fibLine1)
+    if not na(fibLine2)
+        line.delete(fibLine2)
+    
+    // Delete old extension lines and labels
+    for l in fibExtLines
+        line.delete(l)
+    array.clear(fibExtLines)
+    for l in fibExtLabels
+        label.delete(l)
+    array.clear(fibExtLabels)
+    
+    // Delete old retracement lines and labels
+    for l in fibRetLines
+        line.delete(l)
+    array.clear(fibRetLines)
+    for l in fibRetLabels
+        label.delete(l)
+    array.clear(fibRetLabels)
+
+    // Draw main move
+    fibLine1 := line.new(fibP1Bar, fibP1, fibP2Bar, fibP2, color=color.new(color.yellow, 0), width=2, style=line.style_dashed)
+    // Draw retracement leg
+    fibLine2 := line.new(fibP2Bar, fibP2, fibP3Bar, fibP3, color=color.new(color.orange, 0), width=2, style=line.style_dashed)
+
+    // Calculate the range for extension (main move)
+    float fibRange = fibP2 - fibP1
+    float startPrice = fibP3
+    bool isUptrend = fibP2 > fibP1
+
+    // Define Fibonacci extension levels - always include standard and intermediate levels
+    var float[] extensionLevels = array.new_float()
+    array.clear(extensionLevels)
+    array.push(extensionLevels, 0.0) // Always include the base level
+
+    // Always include standard levels
+    array.push(extensionLevels, 0.382)
+    array.push(extensionLevels, 0.618)
+    array.push(extensionLevels, 1.0)
+    array.push(extensionLevels, 1.618)
+    array.push(extensionLevels, 2.618)
+    array.push(extensionLevels, 3.618)
+    
+    // Always include intermediate levels
+    array.push(extensionLevels, 0.5)
+    array.push(extensionLevels, 0.786)
+
+    // Optional negative levels
+    if addNegativeLevels
+        array.push(extensionLevels, -0.27)
+        array.push(extensionLevels, -0.618)
+
+    // Additional negative extension levels (separate from addNegativeLevels toggle)
+    if enableAdditionalNegLevels
+        if showNeg0382Ext
+            array.push(extensionLevels, -0.382)
+        if showNeg05Ext
+            array.push(extensionLevels, -0.5)
+        if showNeg0786Ext
+            array.push(extensionLevels, -0.786)
+        if showNeg10Ext
+            array.push(extensionLevels, -1.0)
+        if showNeg1272Ext
+            array.push(extensionLevels, -1.272)
+        if showNeg1618Ext
+            array.push(extensionLevels, -1.618)
+
+    // Extended Fibonacci levels (when master toggle is ON, show all levels automatically)
+    if showExtendedFibLevels
+        array.push(extensionLevels, 4.236)
+        array.push(extensionLevels, 5.236)
+        array.push(extensionLevels, 6.854)
+        array.push(extensionLevels, 7.854)
+        array.push(extensionLevels, 9.472)
+        array.push(extensionLevels, 11.090)
+        array.push(extensionLevels, 13.708)
+        array.push(extensionLevels, 16.326)
+        array.push(extensionLevels, 18.944)
+        array.push(extensionLevels, 21.562)
+        array.push(extensionLevels, 24.180)
+
+    // Draw extension levels if enabled
+    if showExtensions
+        for i = 0 to array.size(extensionLevels) - 1
+            float level = array.get(extensionLevels, i)
+            float price = isUptrend ? startPrice + (fibRange * level) : startPrice - (fibRange * level)
+            
+            // Use tier-based color and width
+            lineColor = getExtensionColor(level, isUptrend)
+            lineWidth = getExtensionWidth(level)
+            
+            newLine = line.new(fibP3Bar, price, math.min(bar_index, fibP3Bar + 50), price, color=lineColor, width=lineWidth, style=get_line_style(fibLineStyle))
+            array.push(fibExtLines, newLine)
+            
+            if fibShowLabels and barstate.islast
+                // Use larger labels for major levels
+                labelSize = (level == 0.0 or level == 1.0 or level == 1.618 or level == 2.618 or level == -1.0 or level == -1.618) ? getFibMajorLabelSize() : getFibLabelSize()
+                newLabel = label.new(bar_index + 2, price, str.tostring(level, "#.###"), color=na, style=label.style_label_left, textcolor=lineColor, size=labelSize)
+                array.push(fibExtLabels, newLabel)
+
+    // Draw retracement levels if enabled
+    if showRetracements
+        // Define retracement levels - always include standard and intermediate levels
+        var float[] retracementLevels = array.new_float()
+        array.clear(retracementLevels)
+        
+        // Always include standard retracement levels
+        array.push(retracementLevels, 0.236)
+        array.push(retracementLevels, 0.382)
+        array.push(retracementLevels, 0.5)
+        array.push(retracementLevels, 0.618)
+        array.push(retracementLevels, 0.786)
+        
+        // Optional negative levels
+        if addNegativeLevels
+            array.push(retracementLevels, -0.236)
+            array.push(retracementLevels, -0.382)
+
+        // Additional negative retracement levels (separate from addNegativeLevels toggle)
+        if enableAdditionalNegLevels
+            if showNeg05Ret
+                array.push(retracementLevels, -0.5)
+            if showNeg0786Ret
+                array.push(retracementLevels, -0.786)
+
+        var float goldenZoneTop = na
+        var float goldenZoneBottom = na
+        
+        for i = 0 to array.size(retracementLevels) - 1
+            float level = array.get(retracementLevels, i)
+            float price = isUptrend ? fibP2 - (fibRange * level) : fibP2 + (fibRange * level)
+            
+            // Track golden zone boundaries (61.8% and 78.6%)
+            if level == 0.618
+                goldenZoneBottom := price
+            if level == 0.786
+                goldenZoneTop := price
+            
+            newLine = line.new(fibP1Bar, price, math.min(bar_index, fibP1Bar + 50), price, color=color.new(color.gray, 0), width=fibLineWidth, style=get_line_style(fibLineStyle))
+            array.push(fibRetLines, newLine)
+            if fibShowLabels and barstate.islast
+                newLabel = label.new(bar_index + 2, price, str.tostring(level, "#.###"), color=na, style=label.style_label_left, textcolor=color.gray, size=getFibLabelSize())
+                array.push(fibRetLabels, newLabel)
+        
+        // Draw Golden Zone Box (61.8% to 78.6% retracement)
+        if showGoldenZone and not na(goldenZoneTop) and not na(goldenZoneBottom)
+            // Check if this is a new swing (P3 bar changed)
+            isNewSwing = na(lastStoredP3Bar) or fibP3Bar != lastStoredP3Bar
+            
+            // Store new golden zone when a new swing completes
+            if isNewSwing
+                if showHistoricalGoldenZones
+                    // Historical mode: Cleanup oldest zones if limit exceeded
+                    while array.size(historicalGoldenZones) >= maxHistoricalGoldenZones
+                        oldBox = array.shift(historicalGoldenZones)
+                        box.delete(oldBox)
+                        array.shift(goldenZoneTops)
+                        array.shift(goldenZoneBottoms)
+                        array.shift(goldenZoneStartBars)
+                        array.shift(goldenZoneEndBars)
+                else
+                    // Single zone mode: Clear previous zone
+                    for box in historicalGoldenZones
+                        box.delete(box)
+                    array.clear(historicalGoldenZones)
+                    array.clear(goldenZoneTops)
+                    array.clear(goldenZoneBottoms)
+                    array.clear(goldenZoneStartBars)
+                    array.clear(goldenZoneEndBars)
+                
+                // Store new zone data
+                array.push(goldenZoneTops, math.max(goldenZoneTop, goldenZoneBottom))
+                array.push(goldenZoneBottoms, math.min(goldenZoneTop, goldenZoneBottom))
+                array.push(goldenZoneStartBars, fibP1Bar)
+                array.push(goldenZoneEndBars, fibP1Bar + 50)  // Initial extension
+                lastStoredP3Bar := fibP3Bar
+            
+            // Delete all existing boxes to recreate with updated positions
+            for box in historicalGoldenZones
+                box.delete(box)
+            array.clear(historicalGoldenZones)
+            
+            // Recreate all golden zones with proper fading and extension
+            totalZones = array.size(goldenZoneTops)
+            for i = 0 to totalZones - 1
+                zoneTop = array.get(goldenZoneTops, i)
+                zoneBottom = array.get(goldenZoneBottoms, i)
+                zoneStartBar = array.get(goldenZoneStartBars, i)
+                zoneEndBar = math.max(array.get(goldenZoneEndBars, i), bar_index)  // Extend forward
+                
+                // Calculate transparency: apply fading only if enabled and multiple zones
+                float transparency = 85  // Default transparency
+                if showHistoricalGoldenZones and totalZones > 1
+                    transparency := getGoldenZoneTransparency(i, totalZones)
+                
+                zoneColor = color.new(goldenZoneColor, transparency)
+                
+                // Create box with fading for older zones
+                zoneBox = box.new(zoneStartBar, zoneTop, zoneEndBar, zoneBottom, border_color=zoneColor, bgcolor=zoneColor, text="GOLDEN ZONE", text_color=color.white)
+                array.push(historicalGoldenZones, zoneBox)
+                
+                // Update end bar for future extension
+                array.set(goldenZoneEndBars, i, zoneEndBar)
+        
+        // Draw 100% Extension Highlight
+        if showExtZone100
+            float ext100Price = isUptrend ? startPrice + (fibRange * 1.0) : startPrice - (fibRange * 1.0)
+            if not na(fib100Ext)
+                box.delete(fib100Ext)
+            fib100Ext := box.new(fibP3Bar, ext100Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext100Price - (fibRange * 0.05), border_color=ext100Color, bgcolor=ext100Color, text="100% TARGET", text_color=color.white)
+        
+        // Draw 161.8% Extension Highlight
+        if show1618Extension
+            float ext1618Price = isUptrend ? startPrice + (fibRange * 1.618) : startPrice - (fibRange * 1.618)
+            if not na(fib1618Ext)
+                box.delete(fib1618Ext)
+            fib1618Ext := box.new(fibP3Bar, ext1618Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext1618Price - (fibRange * 0.05), border_color=ext1618Color, bgcolor=ext1618Color, text="161.8% TARGET", text_color=color.white)
+        
+        // Draw 261.8% Extension Highlight
+        if showExtZone261
+            float ext261Price = isUptrend ? startPrice + (fibRange * 2.618) : startPrice - (fibRange * 2.618)
+            if not na(fib261Ext)
+                box.delete(fib261Ext)
+            fib261Ext := box.new(fibP3Bar, ext261Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext261Price - (fibRange * 0.05), border_color=ext261Color, bgcolor=ext261Color, text="261.8% TARGET", text_color=color.white)
+        
+        // Draw -0.27 Extension Highlight
+        if showExtZoneNeg027
+            float extNeg027Price = isUptrend ? startPrice - (fibRange * 0.27) : startPrice + (fibRange * 0.27)
+            if not na(fibNeg027Ext)
+                box.delete(fibNeg027Ext)
+            fibNeg027Ext := box.new(fibP3Bar, extNeg027Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), extNeg027Price - (fibRange * 0.05), border_color=extNeg027Color, bgcolor=extNeg027Color, text="-0.27 TARGET", text_color=color.white)
+        
+        // Draw -0.618 Extension Highlight
+        if showExtZoneNeg0618
+            float extNeg0618Price = isUptrend ? startPrice - (fibRange * 0.618) : startPrice + (fibRange * 0.618)
+            if not na(fibNeg0618Ext)
+                box.delete(fibNeg0618Ext)
+            fibNeg0618Ext := box.new(fibP3Bar, extNeg0618Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), extNeg0618Price - (fibRange * 0.05), border_color=extNeg0618Color, bgcolor=extNeg0618Color, text="-0.618 TARGET", text_color=color.white)
+        
+        // Draw -1.0 Extension Highlight (Additional Negative Level)
+        if enableAdditionalNegLevels and showExtZoneNeg10
+            float extNeg10Price = isUptrend ? startPrice - (fibRange * 1.0) : startPrice + (fibRange * 1.0)
+            if not na(fibNeg10Ext)
+                box.delete(fibNeg10Ext)
+            fibNeg10Ext := box.new(fibP3Bar, extNeg10Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), extNeg10Price - (fibRange * 0.05), border_color=extNeg10Color, bgcolor=extNeg10Color, text="-1.0 TARGET", text_color=color.white)
+        
+        // Draw -1.618 Extension Highlight (Additional Negative Level)
+        if enableAdditionalNegLevels and showExtZoneNeg1618
+            float extNeg1618Price = isUptrend ? startPrice - (fibRange * 1.618) : startPrice + (fibRange * 1.618)
+            if not na(fibNeg1618Ext)
+                box.delete(fibNeg1618Ext)
+            fibNeg1618Ext := box.new(fibP3Bar, extNeg1618Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), extNeg1618Price - (fibRange * 0.05), border_color=extNeg1618Color, bgcolor=extNeg1618Color, text="-1.618 TARGET", text_color=color.white)
+        
+        // Draw 4.236 Extension Highlight
+        if showExtendedFibLevels and showExtZone4236
+            float ext4236Price = isUptrend ? startPrice + (fibRange * 4.236) : startPrice - (fibRange * 4.236)
+            if not na(fib4236Ext)
+                box.delete(fib4236Ext)
+            fib4236Ext := box.new(fibP3Bar, ext4236Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext4236Price - (fibRange * 0.05), border_color=ext4236Color, bgcolor=ext4236Color, text="4.236 TARGET", text_color=color.white)
+        
+        // Draw 5.236 Extension Highlight
+        if showExtendedFibLevels and showExtZone5236
+            float ext5236Price = isUptrend ? startPrice + (fibRange * 5.236) : startPrice - (fibRange * 5.236)
+            if not na(fib5236Ext)
+                box.delete(fib5236Ext)
+            fib5236Ext := box.new(fibP3Bar, ext5236Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext5236Price - (fibRange * 0.05), border_color=ext5236Color, bgcolor=ext5236Color, text="5.236 TARGET", text_color=color.white)
+        
+        // Draw 6.854 Extension Highlight
+        if showExtendedFibLevels and showExtZone6854
+            float ext6854Price = isUptrend ? startPrice + (fibRange * 6.854) : startPrice - (fibRange * 6.854)
+            if not na(fib6854Ext)
+                box.delete(fib6854Ext)
+            fib6854Ext := box.new(fibP3Bar, ext6854Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext6854Price - (fibRange * 0.05), border_color=ext6854Color, bgcolor=ext6854Color, text="6.854 TARGET", text_color=color.white)
+        
+        // Draw 7.854 Extension Highlight
+        if showExtendedFibLevels and showExtZone7854
+            float ext7854Price = isUptrend ? startPrice + (fibRange * 7.854) : startPrice - (fibRange * 7.854)
+            if not na(fib7854Ext)
+                box.delete(fib7854Ext)
+            fib7854Ext := box.new(fibP3Bar, ext7854Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext7854Price - (fibRange * 0.05), border_color=ext7854Color, bgcolor=ext7854Color, text="7.854 TARGET", text_color=color.white)
+        
+        // Draw 9.472 Extension Highlight
+        if showExtendedFibLevels and showExtZone9472
+            float ext9472Price = isUptrend ? startPrice + (fibRange * 9.472) : startPrice - (fibRange * 9.472)
+            if not na(fib9472Ext)
+                box.delete(fib9472Ext)
+            fib9472Ext := box.new(fibP3Bar, ext9472Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext9472Price - (fibRange * 0.05), border_color=ext9472Color, bgcolor=ext9472Color, text="9.472 TARGET", text_color=color.white)
+        
+        // Draw 11.090 Extension Highlight
+        if showExtendedFibLevels and showExtZone11090
+            float ext11090Price = isUptrend ? startPrice + (fibRange * 11.090) : startPrice - (fibRange * 11.090)
+            if not na(fib11090Ext)
+                box.delete(fib11090Ext)
+            fib11090Ext := box.new(fibP3Bar, ext11090Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext11090Price - (fibRange * 0.05), border_color=ext11090Color, bgcolor=ext11090Color, text="11.090 TARGET", text_color=color.white)
+        
+        // Draw 13.708 Extension Highlight
+        if showExtendedFibLevels and showExtZone13708
+            float ext13708Price = isUptrend ? startPrice + (fibRange * 13.708) : startPrice - (fibRange * 13.708)
+            if not na(fib13708Ext)
+                box.delete(fib13708Ext)
+            fib13708Ext := box.new(fibP3Bar, ext13708Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext13708Price - (fibRange * 0.05), border_color=ext13708Color, bgcolor=ext13708Color, text="13.708 TARGET", text_color=color.white)
+        
+        // Draw 16.326 Extension Highlight
+        if showExtendedFibLevels and showExtZone16326
+            float ext16326Price = isUptrend ? startPrice + (fibRange * 16.326) : startPrice - (fibRange * 16.326)
+            if not na(fib16326Ext)
+                box.delete(fib16326Ext)
+            fib16326Ext := box.new(fibP3Bar, ext16326Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext16326Price - (fibRange * 0.05), border_color=ext16326Color, bgcolor=ext16326Color, text="16.326 TARGET", text_color=color.white)
+        
+        // Draw 18.944 Extension Highlight
+        if showExtendedFibLevels and showExtZone18944
+            float ext18944Price = isUptrend ? startPrice + (fibRange * 18.944) : startPrice - (fibRange * 18.944)
+            if not na(fib18944Ext)
+                box.delete(fib18944Ext)
+            fib18944Ext := box.new(fibP3Bar, ext18944Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext18944Price - (fibRange * 0.05), border_color=ext18944Color, bgcolor=ext18944Color, text="18.944 TARGET", text_color=color.white)
+        
+        // Draw 21.562 Extension Highlight
+        if showExtendedFibLevels and showExtZone21562
+            float ext21562Price = isUptrend ? startPrice + (fibRange * 21.562) : startPrice - (fibRange * 21.562)
+            if not na(fib21562Ext)
+                box.delete(fib21562Ext)
+            fib21562Ext := box.new(fibP3Bar, ext21562Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext21562Price - (fibRange * 0.05), border_color=ext21562Color, bgcolor=ext21562Color, text="21.562 TARGET", text_color=color.white)
+        
+        // Draw 24.180 Extension Highlight
+        if showExtendedFibLevels and showExtZone24180
+            float ext24180Price = isUptrend ? startPrice + (fibRange * 24.180) : startPrice - (fibRange * 24.180)
+            if not na(fib24180Ext)
+                box.delete(fib24180Ext)
+            fib24180Ext := box.new(fibP3Bar, ext24180Price + (fibRange * 0.05), math.min(bar_index, fibP3Bar + 50), ext24180Price - (fibRange * 0.05), border_color=ext24180Color, bgcolor=ext24180Color, text="24.180 TARGET", text_color=color.white)
+
+// === Dynamic Risk Multiplier Recovery ===
+// In the win logic for TP1 (long and short), change riskMultiplier update:
+// Instead of: riskMultiplier := 1.0
+// Use: riskMultiplier := math.min(1.0, riskMultiplier + 0.1)
+
+// === Market Context Detection ===
+// Swing Points
+swingHigh = ta.pivothigh(high, swingStrength, swingStrength)
+swingLow = ta.pivotlow(low, swingStrength, swingStrength)
+
+// Session High/Low
+sessionHigh = ta.highest(high, sessionHLlookback)
+sessionLow = ta.lowest(low, sessionHLlookback)
+
+// === Plotting Market Context ===
+// Plot swing points
+plotshape(showSwingPoints and not na(swingHigh), "Swing High", shape.circle, location.abovebar, color.new(color.red, 0), size=size.tiny)
+plotshape(showSwingPoints and not na(swingLow), "Swing Low", shape.circle, location.belowbar, color.new(color.green, 0), size=size.tiny)
+
+// Plot session high/low lines
+var line sessionHighLine = na
+var line sessionLowLine = na
+var label sessionHighLabel = na
+var label sessionLowLabel = na
+
+if showKeyLevels and barstate.islast
+    // Delete old lines and labels
+    line.delete(sessionHighLine)
+    line.delete(sessionLowLine)
+    label.delete(sessionHighLabel)
+    label.delete(sessionLowLabel)
+    
+    // Draw new session high/low lines
+    sessionHighLine := line.new(bar_index - sessionHLlookback, sessionHigh, bar_index, sessionHigh, color=color.new(color.blue, 50), style=line.style_dashed)
+    sessionLowLine := line.new(bar_index - sessionHLlookback, sessionLow, bar_index, sessionLow, color=color.new(color.red, 50), style=line.style_dashed)
+    
+    // Add labels
+    sessionHighLabel := label.new(bar_index + 2, sessionHigh, "Session High", color=color.new(color.blue, 90), style=label.style_label_left, textcolor=color.blue, size=getSessionLabelSize())
+    sessionLowLabel := label.new(bar_index + 2, sessionLow, "Session Low", color=color.new(color.red, 90), style=label.style_label_left, textcolor=color.red, size=getSessionLabelSize())
+
+// ==================== ORDER BLOCK DETECTION ====================
+// Simple order block detection and drawing
+// Arrays already declared earlier for confluence detection
+
+// Loosened Bullish Order Block: red candle, next candle green with higher close, high volume
+bullOB = close < open and close[1] > open[1] and close[1] > close and volume > avgVolume
+if bullOB
+    // Calculate center price
+    centerPrice = (low + high) / 2
+    
+    if showOrderBlockVisuals
+        // Create box without border
+        obBox = box.new(bar_index, low, bar_index + orderBlockExtendBars, high, bgcolor=color.new(color.blue, 85), border_color=color.new(color.white, 100), border_width=0)
+        array.push(bullOBBoxes, obBox)
+        
+        // Create center line (semi-transparent)
+        centerLine = line.new(bar_index, centerPrice, bar_index + orderBlockExtendBars, centerPrice, color=color.new(color.blue, 60), width=2, style=line.style_solid)
+        array.push(bullOBCenterLines, centerLine)
+        
+        if array.size(bullOBBoxes) > 10
+            oldBox = array.shift(bullOBBoxes)
+            box.delete(oldBox)
+            oldLine = array.shift(bullOBCenterLines)
+            line.delete(oldLine)
+        
+    else
+        // Create invisible box for logic only
+        obBox = box.new(bar_index, low, bar_index + orderBlockExtendBars, high, bgcolor=color.new(color.blue, 100), border_color=color.new(color.blue, 100), border_width=0)
+        array.push(bullOBBoxes, obBox)
+        if array.size(bullOBBoxes) > 10
+            oldBox = array.shift(bullOBBoxes)
+            box.delete(oldBox)
+    
+    // Handle labels separately
+    if showOrderBlockLabels
+        obLabel = label.new(bar_index + orderBlockExtendBars + 3, low, 'Bull OB', color=color.new(color.blue, 80), style=label.style_label_left, textcolor=color.blue, size=getOrderBlockLabelSize())
+        array.push(bullOBLabels, obLabel)
+        if array.size(bullOBLabels) > 10
+            oldLabel = array.shift(bullOBLabels)
+            label.delete(oldLabel)
+
+// Loosened Bearish Order Block: green candle, next candle red with lower close, high volume
+bearOB = close > open and close[1] < open[1] and close[1] < close and volume > avgVolume
+if bearOB
+    // Calculate center price
+    centerPrice = (high + low) / 2
+    
+    if showOrderBlockVisuals
+        // Create box without border
+        obBox = box.new(bar_index, high, bar_index + orderBlockExtendBars, low, bgcolor=color.new(color.orange, 85), border_color=color.new(color.white, 100), border_width=0)
+        array.push(bearOBBoxes, obBox)
+        
+        // Create center line (semi-transparent)
+        centerLine = line.new(bar_index, centerPrice, bar_index + orderBlockExtendBars, centerPrice, color=color.new(color.orange, 60), width=2, style=line.style_solid)
+        array.push(bearOBCenterLines, centerLine)
+        
+        if array.size(bearOBBoxes) > 10
+            oldBox = array.shift(bearOBBoxes)
+            box.delete(oldBox)
+            oldLine = array.shift(bearOBCenterLines)
+            line.delete(oldLine)
+        
+    else
+        // Create invisible box for logic only
+        obBox = box.new(bar_index, high, bar_index + orderBlockExtendBars, low, bgcolor=color.new(color.orange, 100), border_color=color.new(color.orange, 100), border_width=0)
+        array.push(bearOBBoxes, obBox)
+        if array.size(bearOBBoxes) > 10
+            oldBox = array.shift(bearOBBoxes)
+            box.delete(oldBox)
+    
+    // Handle labels separately
+    if showOrderBlockLabels
+        obLabel = label.new(bar_index + orderBlockExtendBars + 3, high, 'Bear OB', color=color.new(color.orange, 80), style=label.style_label_left, textcolor=color.orange, size=getOrderBlockLabelSize())
+        array.push(bearOBLabels, obLabel)
+        if array.size(bearOBLabels) > 10
+            oldLabel = array.shift(bearOBLabels)
+            label.delete(oldLabel)
+
+// === Order Block Direction Filter for Core Logic ===
+// Find the most recent order block direction
+// lastOBDir = na  // Now declared as var in trade tracking section
+if array.size(bullOBBoxes) > 0 and (array.size(bearOBBoxes) == 0 or box.get_right(array.get(bullOBBoxes, array.size(bullOBBoxes)-1)) > box.get_right(array.get(bearOBBoxes, array.size(bearOBBoxes)-1)))
+    lastOBDir := 1 // Bullish
+else if array.size(bearOBBoxes) > 0
+    lastOBDir := -1 // Bearish
+
+// Core logic filter: only allow trades in OB direction if filter is enabled
+orderBlockLongAllowed = not useOrderBlockFilter or lastOBDir == 1 or na(lastOBDir)
+orderBlockShortAllowed = not useOrderBlockFilter or lastOBDir == -1 or na(lastOBDir)
+
+// In your core logic, add these to your long/short conditions:
+// ...
+// longCondition = ... and orderBlockLongAllowed
+// shortCondition = ... and orderBlockShortAllowed
+
+// === End of Script ===
+
+// ==================== POC LINES DRAWING ====================
+// Draw POC lines only on last bar for performance
+if barstate.islast
+    // Delete old lines and labels
+    line.delete(volumePOCLine)
+    line.delete(sessionPOCLine)
+    line.delete(dailyPOCLine)
+    line.delete(weeklyPOCLine)
+    label.delete(volumePOCLabel)
+    label.delete(sessionPOCLabel)
+    label.delete(dailyPOCLabel)
+    label.delete(weeklyPOCLabel)
+    
+    // Volume Profile POC Line
+    if showAllPOCLines and showVolumePOC and not na(volumePOCPrice)
+        volumePOCLine := line.new(volumePOCBar, volumePOCPrice, bar_index, volumePOCPrice, color=color.new(color.purple, 0), width=pocLineWidth, style=get_poc_line_style(pocLineStyle))
+        if showPOCLabels
+            volumePOCLabel := label.new(bar_index + 5, volumePOCPrice, "VP POC: " + str.tostring(volumePOCPrice, format.mintick), color=color.new(color.purple, 80), style=label.style_label_left, textcolor=color.purple, size=getPOCLabelSize())
+    
+    // Session POC Line
+    if showAllPOCLines and showSessionPOC
+        sessionPOCLine := line.new(bar_index - 20, sessionPOC, bar_index, sessionPOC, color=color.new(color.blue, 0), width=pocLineWidth, style=get_poc_line_style(pocLineStyle))
+        if showPOCLabels
+            sessionPOCLabel := label.new(bar_index + 5, sessionPOC, "Session POC: " + str.tostring(sessionPOC, format.mintick), color=color.new(color.blue, 80), style=label.style_label_left, textcolor=color.blue, size=getPOCLabelSize())
+    
+    // Daily POC Line
+    if showAllPOCLines and showDailyPOC and not na(dailyPOC)
+        dailyPOCLine := line.new(bar_index - 50, dailyPOC, bar_index, dailyPOC, color=color.new(color.orange, 0), width=pocLineWidth, style=get_poc_line_style(pocLineStyle))
+        if showPOCLabels
+            dailyPOCLabel := label.new(bar_index + 5, dailyPOC, "Daily POC: " + str.tostring(dailyPOC, format.mintick), color=color.new(color.orange, 80), style=label.style_label_left, textcolor=color.orange, size=getPOCLabelSize())
+    
+    // Weekly POC Line
+    if showAllPOCLines and showWeeklyPOC and not na(weeklyPOC)
+        weeklyPOCLine := line.new(bar_index - 100, weeklyPOC, bar_index, weeklyPOC, color=color.new(color.green, 0), width=pocLineWidth, style=get_poc_line_style(pocLineStyle))
+        if showPOCLabels
+            weeklyPOCLabel := label.new(bar_index + 5, weeklyPOC, "Weekly POC: " + str.tostring(weeklyPOC, format.mintick), color=color.new(color.green, 80), style=label.style_label_left, textcolor=color.green, size=getPOCLabelSize())
+
+// ==================== GANN FAN IMPLEMENTATION ====================
+var line[] gannLines = array.new_line()
+var label[] gannLabels = array.new_label()
+var float gannPivotPrice = na
+var int gannPivotBar = na
+var bool gannIsUptrend = false
+
+gannPivotHigh = ta.pivothigh(high, gannPivotLookback, gannPivotLookback)
+gannPivotLow = ta.pivotlow(low, gannPivotLookback, gannPivotLookback)
+
+bool newGannPivot = false
+
+if not na(gannPivotHigh)
+    gannPivotPrice := high[gannPivotLookback]
+    gannPivotBar := bar_index - gannPivotLookback
+    gannIsUptrend := false
+    newGannPivot := true
+
+if not na(gannPivotLow)
+    gannPivotPrice := low[gannPivotLookback]
+    gannPivotBar := bar_index - gannPivotLookback
+    gannIsUptrend := true
+    newGannPivot := true
+
+// Recreate Gann Fan lines on pivot change (but don't manage labels here)
+if showGannFan and newGannPivot and not na(gannPivotPrice) and not na(gannPivotBar)
+    for l in gannLines
+        line.delete(l)
+    array.clear(gannLines)
+    for lb in gannLabels
+        label.delete(lb)
+    array.clear(gannLabels)
+    
+    gannAngles = array.from(82.5, 75.0, 71.25, 63.75, 45.0, 26.25, 18.75, 15.0, 7.5)
+    gannNames = array.from("8x1", "4x1", "3x1", "2x1", "1x1", "1x2", "1x3", "1x4", "1x8")
+    gannColors = array.from(color.red, color.orange, color.yellow, color.lime, color.aqua, color.blue, color.purple, color.fuchsia, color.maroon)
+    
+    for i = 0 to array.size(gannAngles) - 1
+        angle = array.get(gannAngles, i)
+        angleName = array.get(gannNames, i)
+        lineColor = array.get(gannColors, i)
+        
+        endBar = gannPivotBar + gannExtendBars
+        atrValue = ta.atr(14)
+        barsFromPivot = endBar - gannPivotBar
+        
+        slope = math.tan(math.toradians(angle))
+        pricePerBar = slope * (atrValue / gannATRMultiplier)
+        priceChange = barsFromPivot * pricePerBar
+        
+        float endPrice = na
+        if gannIsUptrend
+            endPrice := gannPivotPrice + priceChange
+        else
+            endPrice := gannPivotPrice - priceChange
+        
+        gannLine = line.new(gannPivotBar, gannPivotPrice, endBar, endPrice,
+                           color=color.new(lineColor, 0), width=gannLineWidth,
+                           style=line.style_solid, extend=extend.right)
+        array.push(gannLines, gannLine)
+
+// ALWAYS synchronize labels with gannShowLabels setting
+if showGannFan and array.size(gannLines) > 0
+    int expectedLabelCount = gannShowLabels ? array.size(gannLines) : 0
+    
+    // Only update if label count doesn't match expectation
+    if array.size(gannLabels) != expectedLabelCount
+        // Clear all existing labels
+        for lb in gannLabels
+            label.delete(lb)
+        array.clear(gannLabels)
+        
+        // Recreate labels if gannShowLabels is enabled
+        if gannShowLabels
+            gannAngles = array.from(82.5, 75.0, 71.25, 63.75, 45.0, 26.25, 18.75, 15.0, 7.5)
+            gannNames = array.from("8x1", "4x1", "3x1", "2x1", "1x1", "1x2", "1x3", "1x4", "1x8")
+            gannColors = array.from(color.red, color.orange, color.yellow, color.lime, color.aqua, color.blue, color.purple, color.fuchsia, color.maroon)
+            
+            for i = 0 to array.size(gannAngles) - 1
+                if i < array.size(gannLines)
+                    angle = array.get(gannAngles, i)
+                    angleName = array.get(gannNames, i)
+                    lineColor = array.get(gannColors, i)
+                    
+                    gannLine = array.get(gannLines, i)
+                    endBar = gannPivotBar + gannExtendBars
+                    
+                    // Calculate the end price for this angle
+                    atrValue = ta.atr(14)
+                    barsFromPivot = endBar - gannPivotBar
+                    slope = math.tan(math.toradians(angle))
+                    pricePerBar = slope * (atrValue / gannATRMultiplier)
+
+// ==================== SIGNALRELAY AUTO WEBHOOKS (see also signalrelay-momentum-auto-alerts.pine) ====================
+// Paste the block from signalrelay-momentum-auto-alerts.pine below if your TV export ends before Gann completes.
+
+
+sr_noteCompact() =>
+    str.replace(str.replace(lastPotentialNote, "\n", " | "), '"', "'")
+
+sr_fibSnapshot() =>
+    float r = na
+    float ret382 = na
+    float ret618 = na
+    float ret786 = na
+    float ext100 = na
+    float ext1618 = na
+    float ext2618 = na
+    float extNeg027 = na
+    float extNeg618 = na
+    if not na(fibP1) and not na(fibP2) and not na(fibP3)
+        r := fibP2 - fibP1
+        bool up = fibP2 > fibP1
+        ret382 := up ? fibP2 - r * 0.382 : fibP2 + r * 0.382
+        ret618 := up ? fibP2 - r * 0.618 : fibP2 + r * 0.618
+        ret786 := up ? fibP2 - r * 0.786 : fibP2 + r * 0.786
+        ext100 := up ? fibP3 + r * 1.0 : fibP3 - r * 1.0
+        ext1618 := up ? fibP3 + r * 1.618 : fibP3 - r * 1.618
+        ext2618 := up ? fibP3 + r * 2.618 : fibP3 - r * 2.618
+        if addNegativeLevels
+            extNeg027 := up ? fibP3 - r * 0.27 : fibP3 + r * 0.27
+            extNeg618 := up ? fibP3 - r * 0.618 : fibP3 + r * 0.618
+    [ret382, ret618, ret786, ext100, ext1618, ext2618, extNeg027, extNeg618]
+
+sr_goldenZoneActive() =>
+    int n = array.size(goldenZoneTops)
+    float t = n > 0 ? array.get(goldenZoneTops, n - 1) : na
+    float b = n > 0 ? array.get(goldenZoneBottoms, n - 1) : na
+    [t, b]
+
+sr_buildPayload(string event, string side, bool goldenBounce) =>
+    [gzTop, gzBottom] = sr_goldenZoneActive()
+    [fib382, fib618, fib786, fib100, fib1618, fib2618, fibNeg027, fibNeg618] = sr_fibSnapshot()
+    string trend = uptrend ? "UP" : downtrend ? "DOWN" : "FLAT"
+    string gzFlag = goldenBounce ? "BOUNCE" : (not na(gzTop) and low <= gzTop and high >= gzBottom ? "IN_ZONE" : "")
+    string payload = "{"
+    payload += '"source":"momentum-master",'
+    payload += '"event":"' + event + '",'
+    payload += '"side":"' + side + '",'
+    payload += '"strategy":"' + strategyMode + '",'
+    payload += '"ticker":"' + syminfo.ticker + '",'
+    payload += '"exchange":"' + syminfo.prefix + '",'
+    payload += '"interval":"' + timeframe.period + '",'
+    payload += '"time":"' + str.tostring(time) + '",'
+    payload += '"timenow":"' + str.tostring(timenow) + '",'
+    payload += '"open":"' + str.tostring(open) + '",'
+    payload += '"high":"' + str.tostring(high) + '",'
+    payload += '"low":"' + str.tostring(low) + '",'
+    payload += '"close":"' + str.tostring(close) + '",'
+    payload += '"volume":"' + str.tostring(volume) + '",'
+    payload += '"entry":"' + str.tostring(lastPotentialEntry) + '",'
+    payload += '"sl":"' + str.tostring(lastPotentialSL) + '",'
+    payload += '"tp1":"' + str.tostring(lastPotentialTP1) + '",'
+    payload += '"tp2":"' + str.tostring(lastPotentialTP2) + '",'
+    payload += '"tp3":"' + str.tostring(lastPotentialTP3) + '",'
+    payload += '"tp4":"' + str.tostring(lastPotentialTP4) + '",'
+    payload += '"tp5":"' + str.tostring(lastPotentialTP5) + '",'
+    payload += '"tp6":"' + str.tostring(lastPotentialTP6) + '",'
+    payload += '"rsi":"' + str.tostring(rsi, "#.##") + '",'
+    payload += '"mfi":"' + str.tostring(mfi, "#.##") + '",'
+    payload += '"atr":"' + str.tostring(atr, "#.##") + '",'
+    payload += '"adx":"' + str.tostring(adx, "#.##") + '",'
+    payload += '"confidence":"' + str.tostring(signalConfidence, "#.#") + '",'
+    payload += '"confluence":"' + str.tostring(currentConfluenceRating) + '",'
+    payload += '"trend":"' + trend + '",'
+    payload += '"volumeHigh":"' + str.tostring(highVolume) + '",'
+    payload += '"bullDivRSI":"' + str.tostring(showBullDivRSI) + '",'
+    payload += '"bearDivRSI":"' + str.tostring(showBearDivRSI) + '",'
+    payload += '"orderBlockDir":"' + str.tostring(lastOBDir) + '",'
+    payload += '"goldenZone":"' + gzFlag + '",'
+    payload += '"goldenZoneBounce":' + (goldenBounce ? "true" : "false") + ","
+    payload += '"goldenZoneTop":"' + str.tostring(gzTop) + '",'
+    payload += '"goldenZoneBottom":"' + str.tostring(gzBottom) + '",'
+    payload += '"fib382":"' + str.tostring(fib382) + '",'
+    payload += '"fib618":"' + str.tostring(fib618) + '",'
+    payload += '"fib786":"' + str.tostring(fib786) + '",'
+    payload += '"fib100":"' + str.tostring(fib100) + '",'
+    payload += '"fib1618":"' + str.tostring(fib1618) + '",'
+    payload += '"fib2618":"' + str.tostring(fib2618) + '",'
+    payload += '"fibNeg027":"' + str.tostring(fibNeg027) + '",'
+    payload += '"fibNeg618":"' + str.tostring(fibNeg618) + '",'
+    payload += '"note":"' + sr_noteCompact() + '"'
+    payload += "}"
+    payload
+
+// --- Long / short entries (bar close, rising edge) ---
+sr_longEdge = finalLongCondition and barstate.isconfirmed and strategyMode != "Disabled" and not finalLongCondition[1]
+sr_shortEdge = finalShortCondition and barstate.isconfirmed and strategyMode != "Disabled" and not finalShortCondition[1]
+
+if sr_longEdge
+    alert(sr_buildPayload("long_entry", "LONG", false), alert.freq_once_per_bar)
+if sr_shortEdge
+    alert(sr_buildPayload("short_entry", "SHORT", false), alert.freq_once_per_bar)
+
+// --- Golden zone bounce ---
+var int sr_gzTouchBar = na
+var int sr_gzBounceAlertBar = na
+sr_gzTouchBars = 12
+sr_gzAlertCooldown = 10
+
+[sr_gzTop, sr_gzBottom] = sr_goldenZoneActive()
+sr_gzWickTouch = not na(sr_gzTop) and not na(sr_gzBottom) and low <= sr_gzTop and high >= sr_gzBottom
+if sr_gzWickTouch
+    sr_gzTouchBar := bar_index
+
+sr_gzRecentTouch = not na(sr_gzTouchBar) and bar_index - sr_gzTouchBar <= sr_gzTouchBars
+sr_gzBullReclaim = not na(sr_gzTop) and close > sr_gzTop and close > open
+sr_gzBounce = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBullReclaim and (finalLongCondition or showBullDivRSI)
+
+if sr_gzBounce and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
+    sr_gzBounceAlertBar := bar_index
+    alert(sr_buildPayload("golden_zone_bounce", "LONG", true), alert.freq_once_per_bar)

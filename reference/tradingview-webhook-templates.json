@@ -1,0 +1,4 @@
+{
+  "momentum_long_entry": "{\"source\":\"momentum-master\",\"event\":\"long_entry\",\"side\":\"LONG\",\"ticker\":\"{{ticker}}\",\"exchange\":\"{{exchange}}\",\"interval\":\"{{interval}}\",\"time\":\"{{time}}\",\"timenow\":\"{{timenow}}\",\"open\":\"{{open}}\",\"high\":\"{{high}}\",\"low\":\"{{low}}\",\"close\":\"{{close}}\",\"volume\":\"{{volume}}\",\"entry\":\"{{close}}\"}",
+  "momentum_golden_zone_bounce": "Use alert() block in signalrelay-golden-zone-bounce.pine (Any alert() function call on chart alert)."
+}

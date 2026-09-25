@@ -1,0 +1,52 @@
+// Paste at end of Hope & Failure V1. TV alert: Any alert() function call → SignalRelay webhook.
+
+sr_hf_payload(string event, string side) =>
+    string st = switch state
+        0 => "WAITING"
+        1 => "SHORT_BIAS"
+        2 => "GET_SHORT"
+        3 => "LONG_BIAS"
+        4 => "GET_LONG"
+        => "WAITING"
+    float wr = totalTrades > 0 ? tp1Wins * 100.0 / totalTrades : na
+    string payload = "{"
+    payload += '"source":"hope-failure",'
+    payload += '"event":"' + event + '",'
+    payload += '"side":"' + side + '",'
+    payload += '"status":"' + st + '",'
+    payload += '"ticker":"' + syminfo.ticker + '",'
+    payload += '"exchange":"' + syminfo.prefix + '",'
+    payload += '"interval":"' + timeframe.period + '",'
+    payload += '"time":"' + str.tostring(time) + '",'
+    payload += '"timenow":"' + str.tostring(timenow) + '",'
+    payload += '"open":"' + str.tostring(open) + '",'
+    payload += '"high":"' + str.tostring(high) + '",'
+    payload += '"low":"' + str.tostring(low) + '",'
+    payload += '"close":"' + str.tostring(close) + '",'
+    payload += '"volume":"' + str.tostring(volume) + '",'
+    payload += '"burstHigh":"' + str.tostring(burstHigh) + '",'
+    payload += '"burstLow":"' + str.tostring(burstLow) + '",'
+    payload += '"fib382":"' + str.tostring(fibPriceForRatio(fib382)) + '",'
+    payload += '"fib5":"' + str.tostring(fibPriceForRatio(fib5)) + '",'
+    payload += '"entry":"' + str.tostring(entryPrice) + '",'
+    payload += '"sl":"' + str.tostring(slPrice) + '",'
+    payload += '"tp1":"' + str.tostring(tp1) + '",'
+    payload += '"tp2":"' + str.tostring(tp2) + '",'
+    payload += '"tp3":"' + str.tostring(tp3) + '",'
+    payload += '"tp4":"' + str.tostring(tp4) + '",'
+    payload += '"tp5":"' + str.tostring(tp5) + '",'
+    payload += '"tp6":"' + str.tostring(tp6) + '",'
+    payload += '"rsi":"' + str.tostring(rsi, "#.##") + '",'
+    payload += '"atr":"' + str.tostring(atr, "#.##") + '",'
+    payload += '"winRate":"' + str.tostring(wr, "#.##") + '"'
+    payload += "}"
+    payload
+
+if reversalLongConfirmed and barstate.isconfirmed
+    alert(sr_hf_payload("long_entry", "LONG"), alert.freq_once_per_bar)
+if reversalShortConfirmed and barstate.isconfirmed
+    alert(sr_hf_payload("short_entry", "SHORT"), alert.freq_once_per_bar)
+if newBurstUp and barstate.isconfirmed
+    alert(sr_hf_payload("burst_up", "SHORT_BIAS"), alert.freq_once_per_bar)
+if newBurstDown and barstate.isconfirmed
+    alert(sr_hf_payload("burst_down", "LONG_BIAS"), alert.freq_once_per_bar)

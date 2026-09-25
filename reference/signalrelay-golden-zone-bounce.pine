@@ -1,0 +1,31 @@
+// Paste at the END of your full Momentum Master v1 script (after goldenZoneTops/Bottoms are in use).
+// TradingView alert: "Any alert() function call" + webhook URL → SignalRelay /api/webhook
+
+// ==================== SIGNALRELAY: GOLDEN ZONE BOUNCE ====================
+var int sr_gzTouchBar = na
+var int sr_gzBounceAlertBar = na
+sr_gzTouchBars = 12
+sr_gzAlertCooldown = 10
+
+sr_gzCount = array.size(goldenZoneTops)
+sr_gzTop = sr_gzCount > 0 ? array.get(goldenZoneTops, sr_gzCount - 1) : na
+sr_gzBottom = sr_gzCount > 0 ? array.get(goldenZoneBottoms, sr_gzCount - 1) : na
+
+sr_gzWickTouch = not na(sr_gzTop) and not na(sr_gzBottom) and low <= sr_gzTop and high >= sr_gzBottom
+if sr_gzWickTouch
+    sr_gzTouchBar := bar_index
+
+sr_gzRecentTouch = not na(sr_gzTouchBar) and bar_index - sr_gzTouchBar <= sr_gzTouchBars
+sr_gzBullReclaim = not na(sr_gzTop) and close > sr_gzTop and close > open
+sr_gzBounce = showGoldenZone and sr_gzRecentTouch and sr_gzBullReclaim and (finalLongCondition or showBullDivRSI)
+
+if sr_gzBounce and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
+    sr_gzBounceAlertBar := bar_index
+    sr_payload =
+         '{"source":"momentum-master","event":"golden_zone_bounce","goldenZoneBounce":true,"goldenZone":"BOUNCE","side":"LONG",' +
+         '"ticker":"' + syminfo.ticker + '","exchange":"' + syminfo.prefix + '","interval":"' + timeframe.period + '",' +
+         '"timenow":"' + str.tostring(timenow) + '","close":"' + str.tostring(close) + '",' +
+         '"goldenZoneTop":"' + str.tostring(sr_gzTop) + '","goldenZoneBottom":"' + str.tostring(sr_gzBottom) + '",' +
+         '"entry":"' + str.tostring(close) + '","rsi":"' + str.tostring(rsi, "#.##") + '",' +
+         '"confidence":"' + str.tostring(signalConfidence, "#.#") + '","confluence":"' + str.tostring(currentConfluenceRating) + '"}'
+    alert(sr_payload, alert.freq_once_per_bar)

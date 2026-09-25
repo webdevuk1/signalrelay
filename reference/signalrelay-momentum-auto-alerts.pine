@@ -1,0 +1,120 @@
+// =============================================================================
+// SIGNALRELAY — paste this block at the VERY END of Momentum Master v1 on TV.
+// One chart alert: Condition = "Any alert() function call" → Webhook → /api/webhook
+// =============================================================================
+
+sr_noteCompact() =>
+    str.replace(str.replace(lastPotentialNote, "\n", " | "), '"', "'")
+
+sr_fibSnapshot() =>
+    float r = na
+    float ret382 = na
+    float ret618 = na
+    float ret786 = na
+    float ext100 = na
+    float ext1618 = na
+    float ext2618 = na
+    float extNeg027 = na
+    float extNeg618 = na
+    if not na(fibP1) and not na(fibP2) and not na(fibP3)
+        r := fibP2 - fibP1
+        bool up = fibP2 > fibP1
+        ret382 := up ? fibP2 - r * 0.382 : fibP2 + r * 0.382
+        ret618 := up ? fibP2 - r * 0.618 : fibP2 + r * 0.618
+        ret786 := up ? fibP2 - r * 0.786 : fibP2 + r * 0.786
+        ext100 := up ? fibP3 + r * 1.0 : fibP3 - r * 1.0
+        ext1618 := up ? fibP3 + r * 1.618 : fibP3 - r * 1.618
+        ext2618 := up ? fibP3 + r * 2.618 : fibP3 - r * 2.618
+        if addNegativeLevels
+            extNeg027 := up ? fibP3 - r * 0.27 : fibP3 + r * 0.27
+            extNeg618 := up ? fibP3 - r * 0.618 : fibP3 + r * 0.618
+    [ret382, ret618, ret786, ext100, ext1618, ext2618, extNeg027, extNeg618]
+
+sr_goldenZoneActive() =>
+    int n = array.size(goldenZoneTops)
+    float t = n > 0 ? array.get(goldenZoneTops, n - 1) : na
+    float b = n > 0 ? array.get(goldenZoneBottoms, n - 1) : na
+    [t, b]
+
+sr_buildPayload(string event, string side, bool goldenBounce) =>
+    [gzTop, gzBottom] = sr_goldenZoneActive()
+    [fib382, fib618, fib786, fib100, fib1618, fib2618, fibNeg027, fibNeg618] = sr_fibSnapshot()
+    string trend = uptrend ? "UP" : downtrend ? "DOWN" : "FLAT"
+    string gzFlag = goldenBounce ? "BOUNCE" : (not na(gzTop) and low <= gzTop and high >= gzBottom ? "IN_ZONE" : "")
+    string payload = "{"
+    payload += '"source":"momentum-master",'
+    payload += '"event":"' + event + '",'
+    payload += '"side":"' + side + '",'
+    payload += '"strategy":"' + strategyMode + '",'
+    payload += '"ticker":"' + syminfo.ticker + '",'
+    payload += '"exchange":"' + syminfo.prefix + '",'
+    payload += '"interval":"' + timeframe.period + '",'
+    payload += '"time":"' + str.tostring(time) + '",'
+    payload += '"timenow":"' + str.tostring(timenow) + '",'
+    payload += '"open":"' + str.tostring(open) + '",'
+    payload += '"high":"' + str.tostring(high) + '",'
+    payload += '"low":"' + str.tostring(low) + '",'
+    payload += '"close":"' + str.tostring(close) + '",'
+    payload += '"volume":"' + str.tostring(volume) + '",'
+    payload += '"entry":"' + str.tostring(lastPotentialEntry) + '",'
+    payload += '"sl":"' + str.tostring(lastPotentialSL) + '",'
+    payload += '"tp1":"' + str.tostring(lastPotentialTP1) + '",'
+    payload += '"tp2":"' + str.tostring(lastPotentialTP2) + '",'
+    payload += '"tp3":"' + str.tostring(lastPotentialTP3) + '",'
+    payload += '"tp4":"' + str.tostring(lastPotentialTP4) + '",'
+    payload += '"tp5":"' + str.tostring(lastPotentialTP5) + '",'
+    payload += '"tp6":"' + str.tostring(lastPotentialTP6) + '",'
+    payload += '"rsi":"' + str.tostring(rsi, "#.##") + '",'
+    payload += '"mfi":"' + str.tostring(mfi, "#.##") + '",'
+    payload += '"atr":"' + str.tostring(atr, "#.##") + '",'
+    payload += '"adx":"' + str.tostring(adx, "#.##") + '",'
+    payload += '"confidence":"' + str.tostring(signalConfidence, "#.#") + '",'
+    payload += '"confluence":"' + str.tostring(currentConfluenceRating) + '",'
+    payload += '"trend":"' + trend + '",'
+    payload += '"volumeHigh":"' + str.tostring(highVolume) + '",'
+    payload += '"bullDivRSI":"' + str.tostring(showBullDivRSI) + '",'
+    payload += '"bearDivRSI":"' + str.tostring(showBearDivRSI) + '",'
+    payload += '"orderBlockDir":"' + str.tostring(lastOBDir) + '",'
+    payload += '"goldenZone":"' + gzFlag + '",'
+    payload += '"goldenZoneBounce":' + (goldenBounce ? "true" : "false") + ","
+    payload += '"goldenZoneTop":"' + str.tostring(gzTop) + '",'
+    payload += '"goldenZoneBottom":"' + str.tostring(gzBottom) + '",'
+    payload += '"fib382":"' + str.tostring(fib382) + '",'
+    payload += '"fib618":"' + str.tostring(fib618) + '",'
+    payload += '"fib786":"' + str.tostring(fib786) + '",'
+    payload += '"fib100":"' + str.tostring(fib100) + '",'
+    payload += '"fib1618":"' + str.tostring(fib1618) + '",'
+    payload += '"fib2618":"' + str.tostring(fib2618) + '",'
+    payload += '"fibNeg027":"' + str.tostring(fibNeg027) + '",'
+    payload += '"fibNeg618":"' + str.tostring(fibNeg618) + '",'
+    payload += '"note":"' + sr_noteCompact() + '"'
+    payload += "}"
+    payload
+
+// --- Long / short entries (bar close, rising edge) ---
+sr_longEdge = finalLongCondition and barstate.isconfirmed and strategyMode != "Disabled" and not finalLongCondition[1]
+sr_shortEdge = finalShortCondition and barstate.isconfirmed and strategyMode != "Disabled" and not finalShortCondition[1]
+
+if sr_longEdge
+    alert(sr_buildPayload("long_entry", "LONG", false), alert.freq_once_per_bar)
+if sr_shortEdge
+    alert(sr_buildPayload("short_entry", "SHORT", false), alert.freq_once_per_bar)
+
+// --- Golden zone bounce ---
+var int sr_gzTouchBar = na
+var int sr_gzBounceAlertBar = na
+sr_gzTouchBars = 12
+sr_gzAlertCooldown = 10
+
+[sr_gzTop, sr_gzBottom] = sr_goldenZoneActive()
+sr_gzWickTouch = not na(sr_gzTop) and not na(sr_gzBottom) and low <= sr_gzTop and high >= sr_gzBottom
+if sr_gzWickTouch
+    sr_gzTouchBar := bar_index
+
+sr_gzRecentTouch = not na(sr_gzTouchBar) and bar_index - sr_gzTouchBar <= sr_gzTouchBars
+sr_gzBullReclaim = not na(sr_gzTop) and close > sr_gzTop and close > open
+sr_gzBounce = barstate.isconfirmed and showGoldenZone and sr_gzRecentTouch and sr_gzBullReclaim and (finalLongCondition or showBullDivRSI)
+
+if sr_gzBounce and (na(sr_gzBounceAlertBar) or bar_index - sr_gzBounceAlertBar >= sr_gzAlertCooldown)
+    sr_gzBounceAlertBar := bar_index
+    alert(sr_buildPayload("golden_zone_bounce", "LONG", true), alert.freq_once_per_bar)
