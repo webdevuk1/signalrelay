@@ -3111,3 +3111,57 @@ if barstate.isconfirmed and showRetracements and sr_levelTouched(sr_fib618) and 
 if barstate.isconfirmed and showRetracements and sr_levelTouched(sr_fib786) and (na(sr_lastFib786Bar) or bar_index - sr_lastFib786Bar >= sr_fibAlertCooldown)
     sr_lastFib786Bar := bar_index
     alert(sr_buildPayload("fib_786_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+
+var int sr_lastFibNeg027Bar = na
+var int sr_lastFibNeg618Bar = na
+var int sr_lastFibNeg10Bar = na
+if barstate.isconfirmed and showExtZoneNeg027 and sr_levelTouched(sr_fibNeg027) and (na(sr_lastFibNeg027Bar) or bar_index - sr_lastFibNeg027Bar >= sr_fibAlertCooldown)
+    sr_lastFibNeg027Bar := bar_index
+    alert(sr_buildPayload("fib_neg027_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+if barstate.isconfirmed and showExtZoneNeg0618 and sr_levelTouched(sr_fibNeg618) and (na(sr_lastFibNeg618Bar) or bar_index - sr_lastFibNeg618Bar >= sr_fibAlertCooldown)
+    sr_lastFibNeg618Bar := bar_index
+    alert(sr_buildPayload("fib_neg618_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+
+var int sr_gzTouchAlertBar = na
+sr_gzFirstTouch = barstate.isconfirmed and showGoldenZone and sr_gzWickTouch and not sr_gzBullReclaim and not sr_gzBearReclaim
+if sr_gzFirstTouch and (na(sr_gzTouchAlertBar) or bar_index - sr_gzTouchAlertBar >= sr_gzAlertCooldown)
+    sr_gzTouchAlertBar := bar_index
+    alert(sr_buildPayload("golden_zone_touch", "NEUTRAL", false), alert.freq_once_per_bar)
+
+// --- TP level hits (once per open trade) ---
+var bool[] sr_alertedTp1 = array.new_bool()
+var bool[] sr_alertedTp2 = array.new_bool()
+var bool[] sr_alertedTp3 = array.new_bool()
+var bool[] sr_alertedTp4 = array.new_bool()
+var bool[] sr_alertedTp5 = array.new_bool()
+var bool[] sr_alertedTp6 = array.new_bool()
+
+while array.size(sr_alertedTp1) < array.size(tradeEntries)
+    array.push(sr_alertedTp1, false)
+    array.push(sr_alertedTp2, false)
+    array.push(sr_alertedTp3, false)
+    array.push(sr_alertedTp4, false)
+    array.push(sr_alertedTp5, false)
+    array.push(sr_alertedTp6, false)
+
+if barstate.isconfirmed and array.size(tradeEntries) > 0
+    for i = 0 to array.size(tradeEntries) - 1
+        string sr_side = array.get(tradeDirs, i) == 1 ? "LONG" : "SHORT"
+        if array.get(tp1Hits, i) and not array.get(sr_alertedTp1, i)
+            array.set(sr_alertedTp1, i, true)
+            alert(sr_buildPayload("tp1_hit", sr_side, false), alert.freq_once_per_bar)
+        if array.get(tp2Hits, i) and not array.get(sr_alertedTp2, i)
+            array.set(sr_alertedTp2, i, true)
+            alert(sr_buildPayload("tp2_hit", sr_side, false), alert.freq_once_per_bar)
+        if array.get(tp3Hits, i) and not array.get(sr_alertedTp3, i)
+            array.set(sr_alertedTp3, i, true)
+            alert(sr_buildPayload("tp3_hit", sr_side, false), alert.freq_once_per_bar)
+        if enableTP4 and array.get(tp4Hits, i) and not array.get(sr_alertedTp4, i)
+            array.set(sr_alertedTp4, i, true)
+            alert(sr_buildPayload("tp4_hit", sr_side, false), alert.freq_once_per_bar)
+        if enableTP5 and array.get(tp5Hits, i) and not array.get(sr_alertedTp5, i)
+            array.set(sr_alertedTp5, i, true)
+            alert(sr_buildPayload("tp5_hit", sr_side, false), alert.freq_once_per_bar)
+        if enableTP6 and array.get(tp6Hits, i) and not array.get(sr_alertedTp6, i)
+            array.set(sr_alertedTp6, i, true)
+            alert(sr_buildPayload("tp6_hit", sr_side, false), alert.freq_once_per_bar)

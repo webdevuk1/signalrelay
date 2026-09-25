@@ -1,15 +1,28 @@
 import type { RelayEvent } from "@/lib/events";
 
+export type PromptStyle = "review" | "risk" | "scalp" | "swing";
+
 function line(label: string, value: unknown) {
   if (value === undefined || value === null || value === "") return null;
   return `- **${label}:** ${String(value)}`;
 }
 
-export function buildTradeAnalysisPrompt(event: RelayEvent): string {
+const styleIntro: Record<PromptStyle, string> = {
+  review:
+    "Review this TradingView alert for a discretionary trade. Say clearly if it is worth taking, what would confirm it, and what would invalidate it. Keep it practical, not hype.",
+  risk:
+    "Risk-first review: position size sanity, stop placement, R:R to TP1–TP3, what news/session risk applies, and hard invalidation. Say PASS or WAIT if edge is unclear.",
+  scalp:
+    "This is a scalp-style alert (fast timeframe). Focus on spread/slippage, immediate structure, and whether chasing is justified. One paragraph max.",
+  swing:
+    "This is a swing-style alert (higher timeframe). Focus on HTF trend, zone quality, patience, and whether this is early or late. One paragraph max.",
+};
+
+export function buildTradeAnalysisPrompt(event: RelayEvent, style: PromptStyle = "review"): string {
   const p = event.payload;
   const chart = String(p.interval ?? "—");
   const sections: string[] = [
-    "Review this TradingView alert for a discretionary trade. Say clearly if it is worth taking, what would confirm it, and what would invalidate it. Keep it practical, not hype.",
+    styleIntro[style],
     "",
     "## Signal",
     line("Script", event.source) ?? "",

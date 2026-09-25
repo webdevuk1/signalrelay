@@ -30,6 +30,6 @@ export async function POST(request: Request) {
     if (header !== expected && bodySecret !== expected) return unauthorized();
   }
 
-  const event = saveEvent(raw, payload);
+  const event = await saveEvent(raw, payload);
   return Response.json({ ok: true, id: event.id, source: event.source });
 }

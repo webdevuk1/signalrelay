@@ -1,11 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { buildTradeAnalysisPrompt } from "@/lib/trade-prompt";
+import {
+  alertLabel,
+  classifyAlert,
+  isEntry as isEntryAlert,
+  isFibTouch,
+  isGoldenBounce,
+  isGoldenTouch,
+  isLevelHit,
+  type AlertKind,
+} from "@/lib/alert-classify";
+import { buildTradeAnalysisPrompt, type PromptStyle } from "@/lib/trade-prompt";
 
 type RelaySource = "momentum-master" | "hope-failure" | "unknown";
 type Horizon = "scalp" | "intraday" | "swing" | "all";
-type Kind = "all" | "golden" | "entry";
+type Kind = "all" | AlertKind;
+type Retention = "all" | "24h" | "7d";
 type ScriptFilter = "all" | RelaySource;
 
 type RelayEvent = {
@@ -24,8 +35,11 @@ const horizons: { id: Horizon; label: string; hint: string }[] = [
 
 const kinds: { id: Kind; label: string }[] = [
   { id: "all", label: "All alerts" },
-  { id: "golden", label: "Golden zone" },
+  { id: "golden", label: "Golden" },
+  { id: "fib", label: "Fib touch" },
+  { id: "level", label: "TP/SL hit" },
   { id: "entry", label: "Entries" },
+  { id: "burst", label: "Burst" },
 ];
 
 const scripts: { id: ScriptFilter; label: string }[] = [
@@ -99,11 +113,6 @@ function isLit(value: unknown) {
   return true;
 }
 
-function isGoldenBounce(payload: Record<string, unknown>) {
-  if (payload.goldenZoneBounce === true || payload.goldenZoneBounce === "true") return true;
-  return String(payload.event ?? "").toLowerCase() === "golden_zone_bounce";
-}
-
 function chartLabel(raw: unknown) {
   const value = String(raw ?? "").trim().toUpperCase();
   const named: Record<string, string> = {
@@ -146,12 +155,6 @@ function matchesHorizon(label: string, horizon: Horizon) {
   return bucket === "other" || bucket === horizon;
 }
 
-function isEntry(payload: Record<string, unknown>) {
-  const side = String(payload.side ?? payload.status ?? "").toLowerCase();
-  const event = String(payload.event ?? "").toLowerCase();
-  return isLit(payload.entry) || side.includes("long") || side.includes("short") || event.includes("entry");
-}
-
 function formatStamp(iso: string) {
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
@@ -190,12 +193,29 @@ function sideTone(value: unknown) {
   return "text-zinc-200";
 }
 
-function badgeClass(label: string, golden: boolean) {
-  if (golden) return "bg-amber-400/20 text-amber-100 ring-amber-300/40";
+function badgeClass(label: string, kind: AlertKind) {
+  if (kind === "golden") return "bg-amber-400/20 text-amber-100 ring-amber-300/40";
+  if (kind === "fib") return "bg-cyan-400/15 text-cyan-100 ring-cyan-300/35";
+  if (kind === "level") return "bg-violet-400/15 text-violet-100 ring-violet-300/35";
+  if (kind === "burst") return "bg-fuchsia-400/15 text-fuchsia-100 ring-fuchsia-300/35";
   const bucket = horizonOf(label);
   if (bucket === "swing") return "bg-orange-400/15 text-orange-100 ring-orange-300/30";
   if (bucket === "intraday") return "bg-sky-400/15 text-sky-100 ring-sky-300/30";
   return "bg-white/5 text-zinc-400 ring-white/10";
+}
+
+function cardGlow(kind: AlertKind) {
+  if (kind === "golden") return "shadow-[0_0_24px_rgba(251,191,36,0.12)]";
+  if (kind === "fib") return "shadow-[0_0_20px_rgba(34,211,238,0.1)]";
+  if (kind === "entry") return "shadow-[0_0_20px_rgba(52,211,153,0.1)]";
+  return "";
+}
+
+function matchesRetention(receivedAt: string, retention: Retention) {
+  if (retention === "all") return true;
+  const ageMs = Date.now() - new Date(receivedAt).getTime();
+  if (retention === "24h") return ageMs <= 86400000;
+  return ageMs <= 86400000 * 7;
 }
 
 export function Board() {
@@ -207,26 +227,57 @@ export function Board() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [promptStyle, setPromptStyle] = useState<PromptStyle>("review");
+  const [retention, setRetention] = useState<Retention>("all");
+  const [storage, setStorage] = useState<"redis" | "file" | "unknown">("unknown");
+  const [showAllLanes, setShowAllLanes] = useState(false);
 
   useEffect(() => {
     let stop = false;
-    async function load() {
+
+    const apply = (body: { events?: RelayEvent[]; storage?: string }) => {
+      if (stop) return;
+      setEvents(body.events ?? []);
+      setStorage(body.storage === "redis" ? "redis" : body.storage === "file" ? "file" : "unknown");
+      setLive(true);
+    };
+
+    const load = async () => {
       try {
         const response = await fetch("/api/events", { cache: "no-store" });
         if (!response.ok) return;
-        const body = (await response.json()) as { events: RelayEvent[] };
-        if (!stop) {
-          setEvents(body.events ?? []);
-          setLive(true);
-        }
+        apply((await response.json()) as { events: RelayEvent[]; storage?: string });
       } catch {
         if (!stop) setLive(false);
       }
+    };
+
+    let es: EventSource | null = null;
+    if (typeof EventSource !== "undefined") {
+      es = new EventSource("/api/events/stream");
+      es.onmessage = (message) => {
+        try {
+          apply(JSON.parse(message.data) as { events: RelayEvent[] });
+        } catch {
+          void load();
+        }
+      };
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        void load();
+      };
+    } else {
+      void load();
     }
-    load();
-    const timer = setInterval(load, 2000);
+
+    const timer = setInterval(() => {
+      if (!es) void load();
+    }, 5000);
+
     return () => {
       stop = true;
+      es?.close();
       clearInterval(timer);
     };
   }, []);
@@ -236,16 +287,18 @@ export function Board() {
     return events.filter((event) => {
       const chart = chartLabel(event.payload.interval);
       const ticker = String(event.payload.ticker ?? "").toLowerCase();
+      const alertKind = classifyAlert(event.payload);
       if (script !== "all" && event.source !== script) return false;
       if (!matchesHorizon(chart, horizon)) return false;
-      if (kind === "golden" && !isGoldenBounce(event.payload)) return false;
-      if (kind === "entry" && (isGoldenBounce(event.payload) || !isEntry(event.payload))) return false;
+      if (!matchesRetention(event.receivedAt, retention)) return false;
+      if (kind !== "all" && alertKind !== kind) return false;
       if (needle && !ticker.includes(needle) && !chart.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [events, horizon, kind, query, script]);
+  }, [events, horizon, kind, query, script, retention]);
 
   const lanes = useMemo(() => {
+    if (showAllLanes) return filtered.slice(0, 40);
     const seen = new Set<string>();
     const rows: RelayEvent[] = [];
     for (const event of filtered) {
@@ -255,11 +308,15 @@ export function Board() {
       rows.push(event);
     }
     return rows;
-  }, [filtered]);
+  }, [filtered, showAllLanes]);
 
   const selected = filtered.find((event) => event.id === selectedId) ?? filtered[0] ?? null;
   const filled = selected
-    ? detailOrder.filter((key) => isLit(selected.payload[key]) || (key === "goldenZone" && isGoldenBounce(selected.payload)))
+    ? detailOrder.filter(
+        (key) =>
+          isLit(selected.payload[key]) ||
+          (key === "goldenZone" && (isGoldenBounce(selected.payload) || isGoldenTouch(selected.payload))),
+      )
     : [];
 
   return (
@@ -272,6 +329,7 @@ export function Board() {
         <p className="text-xs text-zinc-500">
           <span className={`mr-2 inline-block h-1.5 w-1.5 rounded-full ${live ? "bg-emerald-400" : "bg-zinc-600"}`} />
           {filtered.length} showing · {events.length} stored
+          {storage === "redis" ? " · Redis" : storage === "file" ? " · local file (dev)" : ""}
         </p>
       </header>
 
@@ -313,6 +371,28 @@ export function Board() {
               {item.label}
             </button>
           ))}
+          <select
+            value={retention}
+            onChange={(e) => setRetention(e.target.value as Retention)}
+            className="rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-zinc-300"
+          >
+            <option value="all">All time</option>
+            <option value="24h">Last 24h</option>
+            <option value="7d">Last 7d</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setShowAllLanes((v) => !v)}
+            className={`rounded-full px-3 py-1 text-xs ${showAllLanes ? "bg-white/15 text-zinc-100" : "text-zinc-500"}`}
+          >
+            {showAllLanes ? "Latest per lane" : "All lanes"}
+          </button>
+          <a
+            href="/api/events/export"
+            className="rounded-full border border-white/10 px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200"
+          >
+            Export CSV
+          </a>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -332,7 +412,8 @@ export function Board() {
               ) : (
                 lanes.map((event) => {
                   const chart = chartLabel(event.payload.interval);
-                  const golden = isGoldenBounce(event.payload);
+                  const alertKind = classifyAlert(event.payload);
+                  const label = alertLabel(event.payload);
                   const active = selected?.id === event.id;
                   return (
                     <button
@@ -341,15 +422,25 @@ export function Board() {
                       onClick={() => setSelectedId(event.id)}
                       className={`min-w-44 shrink-0 rounded-2xl border px-3 py-3 text-left ${
                         active ? "border-amber-300/50 bg-white/10" : "border-white/10 bg-[#12151c]"
-                      } ${horizonOf(chart) === "scalp" ? "opacity-80" : ""}`}
+                      } ${cardGlow(alertKind)} ${horizonOf(chart) === "scalp" ? "opacity-80" : ""}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] ring-1 ${badgeClass(chart, golden)}`}>{chart}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] ring-1 ${badgeClass(chart, alertKind)}`}>{chart}</span>
                         <span className="text-[10px] text-zinc-500"><TimeAgo iso={event.receivedAt} /></span>
                       </div>
                       <p className="mt-2 truncate text-sm font-medium">{text(event.payload.ticker) || "Chart"}</p>
-                      <p className={`mt-1 text-xs ${golden ? "text-amber-200" : sideTone(event.payload.side ?? event.payload.status)}`}>
-                        {golden ? "Golden bounce" : text(event.payload.side ?? event.payload.status ?? event.payload.event) || "Alert"}
+                      <p
+                        className={`mt-1 text-xs ${
+                          alertKind === "golden"
+                            ? "text-amber-200"
+                            : alertKind === "fib"
+                              ? "text-cyan-200"
+                              : alertKind === "level"
+                                ? "text-violet-200"
+                                : sideTone(event.payload.side ?? event.payload.status)
+                        }`}
+                      >
+                        {label}
                       </p>
                     </button>
                   );
@@ -363,7 +454,8 @@ export function Board() {
             <ul className="relay-scroll max-h-[28rem] space-y-1 overflow-auto pr-1">
               {filtered.map((event) => {
                 const chart = chartLabel(event.payload.interval);
-                const golden = isGoldenBounce(event.payload);
+                const alertKind = classifyAlert(event.payload);
+                const label = alertLabel(event.payload);
                 return (
                   <li key={event.id}>
                     <button
@@ -373,12 +465,22 @@ export function Board() {
                         selected?.id === event.id ? "bg-white/10" : "hover:bg-white/5"
                       }`}
                     >
-                      <span className={`w-10 shrink-0 rounded-md px-1.5 py-0.5 text-center text-[10px] ring-1 ${badgeClass(chart, golden)}`}>
+                      <span className={`w-10 shrink-0 rounded-md px-1.5 py-0.5 text-center text-[10px] ring-1 ${badgeClass(chart, alertKind)}`}>
                         {chart}
                       </span>
                       <span className="w-24 shrink-0 truncate">{text(event.payload.ticker) || "—"}</span>
-                      <span className={`min-w-0 flex-1 truncate ${golden ? "text-amber-200" : sideTone(event.payload.side)}`}>
-                        {golden ? "Golden bounce" : text(event.payload.side ?? event.payload.event ?? event.payload.status) || "Alert"}
+                      <span
+                        className={`min-w-0 flex-1 truncate ${
+                          alertKind === "golden"
+                            ? "text-amber-200"
+                            : alertKind === "fib"
+                              ? "text-cyan-200"
+                              : alertKind === "level"
+                                ? "text-violet-200"
+                                : sideTone(event.payload.side)
+                        }`}
+                      >
+                        {label}
                       </span>
                       <span className="shrink-0 text-[11px] text-zinc-500"><TimeAgo iso={event.receivedAt} /></span>
                     </button>
@@ -400,13 +502,23 @@ export function Board() {
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <p className={`text-sm ${isGoldenBounce(selected.payload) ? "text-amber-200" : sideTone(selected.payload.side)}`}>
-                    {isGoldenBounce(selected.payload) ? "Golden bounce" : text(selected.payload.side ?? selected.payload.status) || "Alert"}
-                  </p>
+                <p className={`text-sm ${classifyAlert(selected.payload) === "golden" ? "text-amber-200" : sideTone(selected.payload.side)}`}>
+                  {alertLabel(selected.payload)}
+                </p>
+                  <select
+                    value={promptStyle}
+                    onChange={(e) => setPromptStyle(e.target.value as PromptStyle)}
+                    className="rounded-full border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-zinc-300"
+                  >
+                    <option value="review">Review</option>
+                    <option value="risk">Risk</option>
+                    <option value="scalp">Scalp</option>
+                    <option value="swing">Swing</option>
+                  </select>
                   <button
                     type="button"
                     onClick={async () => {
-                      const prompt = buildTradeAnalysisPrompt(selected);
+                      const prompt = buildTradeAnalysisPrompt(selected, promptStyle);
                       try {
                         await navigator.clipboard.writeText(prompt);
                         setCopied(true);
@@ -423,17 +535,25 @@ export function Board() {
               </div>
               <dl className="mt-4 grid grid-cols-2 gap-2">
                 {filled.map((key) => {
-                  const golden = (key === "goldenZone" || key.startsWith("goldenZone")) && isGoldenBounce(selected.payload);
-                  const entry = key === "entry" && isLit(selected.payload.entry);
+                  const golden =
+                    (key === "goldenZone" || key.startsWith("goldenZone")) &&
+                    (isGoldenBounce(selected.payload) || isGoldenTouch(selected.payload));
+                  const fibHit = key.startsWith("fib") && isFibTouch(selected.payload);
+                  const entry = key === "entry" && isEntryAlert(selected.payload);
+                  const level = isLevelHit(selected.payload) && (key === "entry" || key === "sl" || key.startsWith("tp"));
                   return (
                     <div
                       key={key}
                       className={`rounded-xl px-3 py-2 ${key === "note" ? "col-span-2" : ""} ${
                         golden
                           ? "border border-amber-300/50 bg-amber-400/15 shadow-[0_0_18px_rgba(251,191,36,0.18)]"
-                          : entry
-                            ? "border border-emerald-300/40 bg-emerald-400/10"
-                            : "bg-black/30"
+                          : fibHit
+                            ? "border border-cyan-300/40 bg-cyan-400/10"
+                            : entry
+                              ? "border border-emerald-300/40 bg-emerald-400/10"
+                              : level
+                                ? "border border-violet-300/40 bg-violet-400/10"
+                                : "bg-black/30"
                       }`}
                     >
                       <dt className="text-[10px] tracking-wide text-zinc-500 uppercase">{key}</dt>

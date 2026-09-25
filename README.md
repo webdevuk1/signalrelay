@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SignalRelay
 
-## Getting Started
+TradingView webhook inbox and alert desk for **Momentum Master v1 Plus** and **Hope & Failure v1 Plus** Pine scripts.
 
-First, run the development server:
+Live desk: [signalrelay-weld.vercel.app](https://signalrelay-weld.vercel.app/)
+
+## TradingView setup
+
+1. Paste `reference/momentum-master-v1-plus.pine` into Pine Editor → save → add to chart.
+2. **Alerts** → create on that chart → condition **Any alert() function call**.
+3. Notifications → **Webhook URL**: `https://YOUR-DOMAIN/api/webhook`
+4. Optional second alert on **Hope & Failure v1 Plus** (`reference/hope-failure-burst-reversal-v1-plus.pine`) with the same webhook URL.
+
+**Strategy Mode = Disabled** is fine for golden-zone and Fib-touch webhooks. Turn on a strategy only if you want entry / TP-hit alerts from simulated trades.
+
+## Local dev
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Webhook: `POST http://localhost:3000/api/webhook` with JSON body from Pine `alert()`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Events are stored in `data/events.json` (gitignored).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Vercel production (required for persistent alerts)
 
-## Learn More
+Serverless filesystem is **not** reliable. Add **Upstash Redis**:
 
-To learn more about Next.js, take a look at the following resources:
+1. Vercel project → **Storage** → create **Upstash Redis** (or link existing).
+2. Vercel injects `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
+3. Redeploy. Desk header shows **Redis** when connected.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Optional env
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Variable | Purpose |
+|----------|---------|
+| `SIGNALRELAY_WEBHOOK_SECRET` | Reject webhooks unless `secret` field in JSON or header `x-signalrelay-secret` |
+| `SIGNALRELAY_DESK_PASSWORD` | HTTP Basic auth on desk + `/api/events` (webhook stays public) |
 
-## Deploy on Vercel
+## Pine reference files
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| File | Use |
+|------|-----|
+| `momentum-master-v1-original.pine` | Chart only, no webhooks |
+| `momentum-master-v1-plus.pine` | Production + SignalRelay JSON alerts |
+| `hope-failure-burst-reversal-v1-plus.pine` | Hope script + webhooks |
+| `signalrelay-momentum-auto-alerts.pine` | Snippet to append manually |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Desk features
+
+- Horizon filters (Scalp / Intraday / Swing)
+- Alert kinds: Golden, Fib touch, TP/SL hit, Entries, Burst
+- SSE live updates (fallback poll)
+- **Copy Cursor prompt** (Review / Risk / Scalp / Swing)
+- Export CSV
+
+## Scripts
+
+```bash
+npm run build
+npm test
+```
